@@ -46,6 +46,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "live: requires real agent adapters and provider accounts (deselected by default)",
+    "slow: spawns real subprocess fixtures; slower than pure-unit tests",
 ]
 addopts = "-m 'not live'"
 

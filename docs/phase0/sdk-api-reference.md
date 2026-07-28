@@ -118,7 +118,7 @@ await run_agent(ZiggyAgent())      # binds real stdio, runs until EOF, then clos
 | `tool_call` | ToolCallStart | `tool_call_id, title, kind?, status?, content?, locations?, raw_input?, raw_output?` |
 | `tool_call_update` | ToolCallProgress | same fields, all optional except id |
 | `plan` | AgentPlanUpdate | `entries: [PlanEntry(content, priority, status)]` |
-| `plan_content_update` / `plan_removed` | AgentPlanContentUpdate / AgentPlanRemovedUpdate | v2-ish; normalize to generic plan events |
+| `plan_update` / `plan_removed` | AgentPlanContentUpdate / AgentPlanRemovedUpdate | v2-ish (SDK literal is `plan_update`, not `plan_content_update`); normalize to generic plan events |
 | `available_commands_update` | AvailableCommandsUpdate | `available_commands` |
 | `current_mode_update` | CurrentModeUpdate | `current_mode_id` |
 | `config_option_update` | ConfigOptionUpdate | `config_options` |
