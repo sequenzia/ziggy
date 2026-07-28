@@ -51,6 +51,8 @@ class MockAgent:
             scenarios.HELLO: self._scenario_hello,
             scenarios.TOOL_CALLS: self._scenario_tool_calls,
             scenarios.PERMISSION: self._scenario_permission,
+            scenarios.PERMISSION_READ: self._scenario_permission_read,
+            scenarios.PERMISSION_OUTSIDE: self._scenario_permission_outside,
             scenarios.FS_OPS: self._scenario_fs_ops,
             scenarios.MALFORMED: self._scenario_malformed,
             scenarios.CRASH_MID_TURN: self._scenario_crash_mid_turn,
@@ -226,17 +228,20 @@ class MockAgent:
         )
         return "end_turn"
 
-    async def _scenario_permission(self, session_id: str) -> str | None:
+    async def _permission_round_trip(
+        self,
+        session_id: str,
+        tool_call: dict[str, Any],
+        *,
+        approved_text: str,
+        denied_text: str,
+    ) -> str:
+        """Shared permission flow: request -> chunk the outcome -> end_turn."""
         response = await self._request(
             "session/request_permission",
             {
                 "sessionId": session_id,
-                "toolCall": {
-                    "toolCallId": scenarios.PERMISSION_TOOL_CALL_ID,
-                    "title": scenarios.PERMISSION_TOOL_TITLE,
-                    "kind": "execute",
-                    "status": "pending",
-                },
+                "toolCall": tool_call,
                 "options": [
                     {
                         "optionId": scenarios.PERMISSION_ALLOW_OPTION_ID,
@@ -256,11 +261,56 @@ class MockAgent:
             outcome.get("outcome") == "selected"
             and outcome.get("optionId") == scenarios.PERMISSION_ALLOW_OPTION_ID
         )
-        if approved:
-            self._chunk(session_id, scenarios.PERMISSION_APPROVED_TEXT)
-        else:
-            self._chunk(session_id, scenarios.PERMISSION_DENIED_TEXT)
+        self._chunk(session_id, approved_text if approved else denied_text)
         return "end_turn"
+
+    async def _scenario_permission(self, session_id: str) -> str | None:
+        return await self._permission_round_trip(
+            session_id,
+            {
+                "toolCallId": scenarios.PERMISSION_TOOL_CALL_ID,
+                "title": scenarios.PERMISSION_TOOL_TITLE,
+                "kind": "execute",
+                "status": "pending",
+            },
+            approved_text=scenarios.PERMISSION_APPROVED_TEXT,
+            denied_text=scenarios.PERMISSION_DENIED_TEXT,
+        )
+
+    async def _scenario_permission_read(self, session_id: str) -> str | None:
+        """Read permission for a file INSIDE the session cwd: the guarded
+        ceiling allows it, so a serving Ziggy must forward it to its client."""
+        cwd = self._session_cwd.get(session_id, "")
+        path = os.path.join(cwd, scenarios.PERMISSION_READ_FILE_NAME)
+        return await self._permission_round_trip(
+            session_id,
+            {
+                "toolCallId": scenarios.PERMISSION_READ_TOOL_CALL_ID,
+                "title": scenarios.PERMISSION_READ_TOOL_TITLE,
+                "kind": "read",
+                "status": "pending",
+                "locations": [{"path": path}],
+            },
+            approved_text=scenarios.PERMISSION_READ_APPROVED_TEXT,
+            denied_text=scenarios.PERMISSION_READ_DENIED_TEXT,
+        )
+
+    async def _scenario_permission_outside(self, session_id: str) -> str | None:
+        """Edit permission for a path OUTSIDE any workspace: the policy ceiling
+        must deny locally — the upstream client is never asked, even when it is
+        scripted to approve (approval cannot exceed the trusted user ceiling)."""
+        return await self._permission_round_trip(
+            session_id,
+            {
+                "toolCallId": scenarios.PERMISSION_OUTSIDE_TOOL_CALL_ID,
+                "title": scenarios.PERMISSION_OUTSIDE_TOOL_TITLE,
+                "kind": "edit",
+                "status": "pending",
+                "locations": [{"path": scenarios.PERMISSION_OUTSIDE_PATH}],
+            },
+            approved_text=scenarios.PERMISSION_OUTSIDE_APPROVED_TEXT,
+            denied_text=scenarios.PERMISSION_OUTSIDE_DENIED_TEXT,
+        )
 
     async def _scenario_fs_ops(self, session_id: str) -> str | None:
         cwd = self._session_cwd.get(session_id, "")

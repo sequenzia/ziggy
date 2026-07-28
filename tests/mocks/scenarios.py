@@ -16,6 +16,8 @@ from __future__ import annotations
 HELLO = "hello"
 TOOL_CALLS = "tool_calls"
 PERMISSION = "permission"
+PERMISSION_READ = "permission_read"
+PERMISSION_OUTSIDE = "permission_outside"
 FS_OPS = "fs_ops"
 MALFORMED = "malformed"
 CRASH_MID_TURN = "crash_mid_turn"
@@ -29,6 +31,8 @@ ALL_SCENARIOS: tuple[str, ...] = (
     HELLO,
     TOOL_CALLS,
     PERMISSION,
+    PERMISSION_READ,
+    PERMISSION_OUTSIDE,
     FS_OPS,
     MALFORMED,
     CRASH_MID_TURN,
@@ -78,6 +82,28 @@ PERMISSION_ALLOW_OPTION_ID = "allow_once"
 PERMISSION_REJECT_OPTION_ID = "reject_once"
 PERMISSION_APPROVED_TEXT = "permission approved, proceeding"
 PERMISSION_DENIED_TEXT = "denied acknowledged"
+
+# --- permission_read ------------------------------------------------------
+# A read permission for a file INSIDE the session cwd: the guarded policy
+# ceiling ALLOWS this, so a serving Ziggy must forward the request to the
+# connecting ACP client (REQ-012 permission bridge).
+
+PERMISSION_READ_TOOL_CALL_ID = "call-perm-read-1"
+PERMISSION_READ_TOOL_TITLE = "read project notes"
+PERMISSION_READ_FILE_NAME = "notes.txt"
+PERMISSION_READ_APPROVED_TEXT = "read approved, proceeding"
+PERMISSION_READ_DENIED_TEXT = "read denied, stopping"
+
+# --- permission_outside ---------------------------------------------------
+# An edit permission for a path OUTSIDE any workspace: the policy ceiling
+# must deny locally — the upstream client is never asked, even when it is
+# scripted to approve (approval cannot exceed the trusted user ceiling).
+
+PERMISSION_OUTSIDE_TOOL_CALL_ID = "call-perm-outside-1"
+PERMISSION_OUTSIDE_TOOL_TITLE = "edit system hosts file"
+PERMISSION_OUTSIDE_PATH = "/etc/hosts"
+PERMISSION_OUTSIDE_APPROVED_TEXT = "outside edit approved (ceiling breach)"
+PERMISSION_OUTSIDE_DENIED_TEXT = "outside edit denied"
 
 # --- fs_ops ---------------------------------------------------------------
 

@@ -87,6 +87,53 @@ class StopInfo:
 
 
 @dataclass(frozen=True, slots=True)
+class ServerHandshake:
+    """Native ``initialize`` answer from the server app: Ziggy's identity."""
+
+    agent_name: str
+    agent_version: str
+
+
+@dataclass(frozen=True, slots=True)
+class SessionOpened:
+    """Native ``session/new`` answer: the created session + its route surface."""
+
+    session_id: str
+    route: str
+    route_options: list[str]
+
+
+@dataclass(frozen=True, slots=True)
+class RouteState:
+    """Current route + selectable routes after a ``session/set_config_option``."""
+
+    route: str
+    route_options: list[str]
+
+
+@dataclass(frozen=True, slots=True)
+class ServerStopInfo:
+    """Native ``session/prompt`` answer from the server app.
+
+    ``stop_reason``: end_turn | max_tokens | max_turn_requests | refusal | cancelled
+    """
+
+    stop_reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class ServerNotice:
+    """Server-generated human-readable notice re-emitted to the ACP client as
+    an ``agent_message_chunk`` (e.g. the guarded permission-fallback notice)."""
+
+    text: str
+
+
+#: Everything the serving side may re-emit as a ``session/update`` notification.
+ServerUpdate = AgentEvent | ServerNotice
+
+
+@dataclass(frozen=True, slots=True)
 class PermissionOptionN:
     option_id: str
     name: str
@@ -146,6 +193,16 @@ class PolicyDenied(Exception):
     """Raised by hooks when policy denies a mediated fs/terminal operation."""
 
     def __init__(self, reason: str = "denied by policy") -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class ClientPermissionUnsupported(Exception):
+    """Raised by the serving side when the connecting ACP client answered
+    ``session/request_permission`` with method_not_found (-32601); the server
+    app then falls back to guarded local mediation."""
+
+    def __init__(self, reason: str = "client does not support session/request_permission") -> None:
         super().__init__(reason)
         self.reason = reason
 

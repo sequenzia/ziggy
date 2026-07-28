@@ -5,8 +5,10 @@ appears here. Everything outside ``ziggy.acp`` builds against these types.
 """
 
 from ziggy.acp.client import AgentProcessClient
+from ziggy.acp.server import ServerConnection, ZiggyAgentProtocol, serve_stdio
 from ziggy.acp.types import (
     AgentEvent,
+    ClientPermissionUnsupported,
     FsReadRequestN,
     FsWriteRequestN,
     HandshakeInfo,
@@ -18,6 +20,12 @@ from ziggy.acp.types import (
     PermissionRequestN,
     PlanEvent,
     PolicyDenied,
+    RouteState,
+    ServerHandshake,
+    ServerNotice,
+    ServerStopInfo,
+    ServerUpdate,
+    SessionOpened,
     StopInfo,
     TerminalReply,
     TerminalRequestN,
@@ -30,6 +38,7 @@ from ziggy.acp.types import (
 __all__ = [
     "AgentEvent",
     "AgentProcessClient",
+    "ClientPermissionUnsupported",
     "FsReadRequestN",
     "FsWriteRequestN",
     "HandshakeInfo",
@@ -41,6 +50,13 @@ __all__ = [
     "PermissionRequestN",
     "PlanEvent",
     "PolicyDenied",
+    "RouteState",
+    "ServerConnection",
+    "ServerHandshake",
+    "ServerNotice",
+    "ServerStopInfo",
+    "ServerUpdate",
+    "SessionOpened",
     "StopInfo",
     "TerminalReply",
     "TerminalRequestN",
@@ -48,4 +64,6 @@ __all__ = [
     "UnknownUpdateEvent",
     "UnsupportedByPolicy",
     "UsageEvent",
+    "ZiggyAgentProtocol",
+    "serve_stdio",
 ]

@@ -52,6 +52,7 @@ from ziggy.engine.hooks import (
     DEFAULT_DENY_POLICY_NAME,
     DEFAULT_DENY_RULE_ID,
     MetadataLoggerLike,
+    PermissionDecider,
     PolicyHooks,
     RecordingHooks,
 )
@@ -188,6 +189,10 @@ class StepExecutionContext:
     logger: MetadataLoggerLike | None = None
     cancel_event: asyncio.Event | None = None
     attempt_no: int = 1
+    #: Phase-4 server bridge: overrides how permission requests are decided
+    #: (policy ceiling + upstream-client forwarding); ``None`` keeps the local
+    #: policy decision.
+    decide_permission: PermissionDecider | None = None
     _hooks: RecordingHooks | None = field(default=None, repr=False, init=False)
 
     def hooks(self) -> RecordingHooks:
@@ -200,12 +205,14 @@ class StepExecutionContext:
                     logger=self.logger,
                     step_id=self.step_id,
                     attempt_no=self.attempt_no,
+                    decide_permission=self.decide_permission,
                 )
             else:
                 self._hooks = RecordingHooks(
                     recorder=self.recorder,
                     step_id=self.step_id,
                     attempt_no=self.attempt_no,
+                    decide_permission=self.decide_permission,
                 )
         return self._hooks
 
@@ -735,6 +742,7 @@ async def execute_run(
     *,
     render_cb: RenderCallback | None = None,
     cancel_event: asyncio.Event | None = None,
+    decide_permission: PermissionDecider | None = None,
 ) -> RunResult:
     """Execute one direct agent run; always returns the full RunResult.
 
@@ -742,7 +750,9 @@ async def execute_run(
     fallible (REQ-004); store bootstrap failure degrades to in-memory
     recording rather than aborting the run. ``cancel_event`` is the caller's
     cancellation signal (Ctrl-C in the CLI); setting it triggers the full
-    teardown ladder and a ``cancelled`` terminal state.
+    teardown ladder and a ``cancelled`` terminal state. ``decide_permission``
+    is the Phase-4 server bridge's permission-decision override, threaded to
+    the step's mediation hooks (``None`` keeps local policy decisions).
     """
     run_id = new_run_id()
     clock = MonotonicClock()
@@ -865,6 +875,7 @@ async def execute_run(
             logger=spec.logger,
             cancel_event=cancel_event,
             attempt_no=1,
+            decide_permission=decide_permission,
         )
     )
 

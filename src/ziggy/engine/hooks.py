@@ -289,8 +289,14 @@ class PolicyHooks(RecordingHooks):
         logger: MetadataLoggerLike | None = None,
         step_id: str = "main",
         attempt_no: int = 1,
+        decide_permission: PermissionDecider | None = None,
     ) -> None:
-        super().__init__(recorder=recorder, step_id=step_id, attempt_no=attempt_no)
+        super().__init__(
+            recorder=recorder,
+            step_id=step_id,
+            attempt_no=attempt_no,
+            decide_permission=decide_permission,
+        )
         self._policy = policy
         self._logger = logger
 
@@ -313,6 +319,12 @@ class PolicyHooks(RecordingHooks):
     # ---------------------------------------------------------- permissions
 
     async def resolve_permission(self, req: PermissionRequestN) -> PermissionReply:
+        if self._decide_permission is not None:
+            # Phase-4 server bridge: the injected decider owns the whole
+            # decision (policy ceiling first, then client forwarding) and its
+            # recorded payload; the base class records the canonical
+            # permission_requested/permission_decided events around it.
+            return await super().resolve_permission(req)
         summary = _request_summary(req.tool_call)
         self._emit(
             "permission_requested",

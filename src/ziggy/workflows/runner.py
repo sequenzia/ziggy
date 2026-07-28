@@ -45,7 +45,7 @@ from pathlib import Path
 from typing import Any
 
 from ziggy.config import ResolvedConfig
-from ziggy.engine.hooks import MetadataLoggerLike
+from ziggy.engine.hooks import MetadataLoggerLike, PermissionDecider
 from ziggy.engine.lease import AcquiredLease, LeaseManager
 from ziggy.engine.runner import (
     RenderCallback,
@@ -338,6 +338,7 @@ async def _run_steps(
     deadline: WorkflowDeadline,
     grace_seconds: float,
     max_prompt_bytes: int,
+    decide_permission: PermissionDecider | None = None,
 ) -> tuple[bool, bool]:
     """Serial step loop; returns ``(cancelled, capture_degraded)``.
 
@@ -423,6 +424,7 @@ async def _run_steps(
                 logger=prepared.logger,
                 cancel_event=cancel_event,
                 attempt_no=1,
+                decide_permission=decide_permission,
             )
         )
         settle_step_result(
@@ -484,6 +486,7 @@ async def execute_workflow(
     *,
     render_cb: RenderCallback | None = None,
     cancel_event: asyncio.Event | None = None,
+    decide_permission: PermissionDecider | None = None,
 ) -> RunResult:
     """Execute one prepared workflow; always returns the full RunResult.
 
@@ -646,6 +649,7 @@ async def execute_workflow(
                 deadline=WorkflowDeadline(timeout_seconds=deadline_seconds),
                 grace_seconds=grace_seconds,
                 max_prompt_bytes=max_prompt_bytes,
+                decide_permission=decide_permission,
             )
     finally:
         if lease is not None:

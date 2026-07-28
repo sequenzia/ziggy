@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import shutil
@@ -31,6 +32,7 @@ from typing import Annotated, Any, NoReturn
 
 import typer
 
+from ziggy.acp import serve_stdio
 from ziggy.agents import AgentRegistry
 from ziggy.cli.doctor import run_checks
 from ziggy.cli.render import RunRenderer, format_table, run_show_lines, use_plain
@@ -42,6 +44,7 @@ from ziggy.ids import is_run_id, utc_now
 from ziggy.models.common import CaptureProfile, RunStatus
 from ziggy.models.result import RunResult
 from ziggy.models.workflow import WorkflowDef
+from ziggy.server import ZiggyServer
 from ziggy.store import IndexRow, RunIndex, RunStore
 from ziggy.workflows import discover, parse_var_args
 from ziggy.workflows.runner import execute_workflow
@@ -607,6 +610,62 @@ def runs_prune(
     print(f"deleted {len(deleted)} run(s)")
     if failures:
         raise typer.Exit(1)
+
+
+# -------------------------------------------------------------------- serve
+
+
+async def _serve_until_disconnect(server: ZiggyServer) -> None:
+    """Serve stdio until client EOF or SIGTERM/SIGINT, then bounded teardown.
+
+    ``serve_stdio`` returns on client EOF; a termination signal cancels it.
+    Either way ``ZiggyServer.aclose()`` cancels every active run (each run's
+    own teardown ladder bounds completion, leases are released by the
+    runners) before the CLI exits.
+    """
+    loop = asyncio.get_running_loop()
+    serve_task = asyncio.create_task(serve_stdio(server))
+    installed: list[signal.Signals] = []
+
+    def request_shutdown() -> None:
+        serve_task.cancel()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, request_shutdown)
+            installed.append(sig)
+        except (NotImplementedError, RuntimeError, ValueError):
+            pass  # unsupported platform/thread: EOF remains the shutdown path
+    try:
+        await serve_task
+    except asyncio.CancelledError:
+        pass  # signal-requested shutdown
+    finally:
+        for sig in installed:
+            loop.remove_signal_handler(sig)
+        await server.aclose()
+
+
+@app.command()
+def serve() -> None:
+    """Serve Ziggy as an ACP agent on stdio (REQ-012).
+
+    stdout carries ONLY ACP JSON-RPC frames; all diagnostics go to stderr.
+    Client EOF/disconnect (or SIGTERM) cancels active runs, persists what it
+    can, releases leases, and exits after bounded teardown.
+    """
+    logging.basicConfig(
+        stream=sys.stderr,
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    resolved = _load_config(Path.cwd())
+    server = ZiggyServer(resolved)
+    logging.getLogger("ziggy.cli.serve").info(
+        "ziggy serve: ACP agent on stdio (max_active_runs=%d)",
+        resolved.config.server.max_active_runs,
+    )
+    asyncio.run(_serve_until_disconnect(server))
 
 
 # ------------------------------------------------------------------- config
