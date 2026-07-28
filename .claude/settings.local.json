@@ -1,0 +1,11 @@
+{
+  "disabledMcpjsonServers": [
+    "amc"
+  ],
+  "skillOverrides": {
+    "find-docs": "off"
+  },
+  "enabledPlugins": {
+    "agent-alchemy-sdd-tools@agent-alchemy": true
+  }
+}
