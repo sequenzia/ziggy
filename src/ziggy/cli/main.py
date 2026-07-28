@@ -1,7 +1,8 @@
 """Ziggy CLI (REQ-003/014/015): the typer command surface.
 
-Command semantics per spec §5.2: headless one-shot ``run``, run browsing under
-``runs``, config inspection under ``config``, ``agents list``, and ``doctor``.
+Command semantics per spec §5.2: headless one-shot ``run``, workflow execution
+and discovery under ``workflow``, run browsing under ``runs``, config
+inspection under ``config``, ``agents list``, and ``doctor``.
 Exit codes: 0 success; 1 execution or required-persistence failure; 2
 usage/config/trust errors (typer usage errors included); 130 user
 cancellation. Under ``--json`` stdout carries ONLY the machine-readable
@@ -22,10 +23,11 @@ import shutil
 import signal
 import stat
 import sys
+from collections.abc import Callable, Coroutine
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, NoReturn
+from typing import Annotated, Any, NoReturn
 
 import typer
 
@@ -33,12 +35,16 @@ from ziggy.agents import AgentRegistry
 from ziggy.cli.doctor import run_checks
 from ziggy.cli.render import RunRenderer, format_table, run_show_lines, use_plain
 from ziggy.config import ResolvedConfig, ZiggyConfig, load_config
-from ziggy.engine import RunOverrides, RunSpec, execute_run, prepare_run
+from ziggy.engine import RunOverrides, execute_run, prepare_run
+from ziggy.engine.prepare import prepare_workflow
 from ziggy.errors import ERROR_CLASSES, PersistenceError, ZiggyError
 from ziggy.ids import is_run_id, utc_now
 from ziggy.models.common import CaptureProfile, RunStatus
 from ziggy.models.result import RunResult
+from ziggy.models.workflow import WorkflowDef
 from ziggy.store import IndexRow, RunIndex, RunStore
+from ziggy.workflows import discover, parse_var_args
+from ziggy.workflows.runner import execute_workflow
 
 app = typer.Typer(
     name="ziggy",
@@ -48,9 +54,11 @@ app = typer.Typer(
 agents_app = typer.Typer(help="Registered agents.", no_args_is_help=True)
 runs_app = typer.Typer(help="Browse and maintain persisted runs.", no_args_is_help=True)
 config_app = typer.Typer(help="Inspect and validate configuration.", no_args_is_help=True)
+workflow_app = typer.Typer(help="Run and inspect constrained workflows.", no_args_is_help=True)
 app.add_typer(agents_app, name="agents")
 app.add_typer(runs_app, name="runs")
 app.add_typer(config_app, name="config")
+app.add_typer(workflow_app, name="workflow")
 
 _SINCE_DAYS_RE = re.compile(r"^(\d+)d$")
 
@@ -103,8 +111,13 @@ def exit_code_for(result: RunResult) -> int:
     return 0 if result.status is RunStatus.SUCCESS else 1
 
 
-async def _execute_with_sigint(spec: RunSpec, renderer: RunRenderer) -> RunResult:
-    """execute_run with SIGINT -> cancel_event; a second SIGINT hard-exits."""
+async def _execute_with_sigint(
+    start: Callable[[asyncio.Event], Coroutine[Any, Any, RunResult]],
+) -> RunResult:
+    """Run one engine coroutine with SIGINT -> cancel_event; a second SIGINT
+    hard-exits. ``start`` receives the cancel event and returns the run
+    coroutine (``execute_run`` for direct runs, ``execute_workflow`` for
+    workflows)."""
     cancel_event = asyncio.Event()
     loop = asyncio.get_running_loop()
     sigints = 0
@@ -123,10 +136,17 @@ async def _execute_with_sigint(spec: RunSpec, renderer: RunRenderer) -> RunResul
     except (NotImplementedError, RuntimeError, ValueError):
         pass  # unsupported platform/thread: run without cancel-on-SIGINT
     try:
-        return await execute_run(spec, render_cb=renderer.on_event, cancel_event=cancel_event)
+        return await start(cancel_event)
     finally:
         if installed:
             loop.remove_signal_handler(signal.SIGINT)
+
+
+def _parse_provider_flag(value: str | None) -> list[str] | None:
+    """``--acknowledge-egress p1,p2`` -> provider list (None when not given)."""
+    if value is None:
+        return None
+    return [part.strip() for part in value.split(",") if part.strip()]
 
 
 # ---------------------------------------------------------------------- run
@@ -167,14 +187,11 @@ def run(
     """One-shot headless run against a named agent."""
     workspace = Path.cwd()
     resolved = _load_config(workspace)
-    providers = None
-    if acknowledge_egress is not None:
-        providers = [part.strip() for part in acknowledge_egress.split(",") if part.strip()]
     overrides = RunOverrides(
         no_save=no_save,
         capture=capture,
         timeout_seconds=timeout,
-        acknowledge_egress=providers,
+        acknowledge_egress=_parse_provider_flag(acknowledge_egress),
     )
     try:
         prepared = prepare_run(
@@ -189,7 +206,13 @@ def run(
     progress = sys.stderr if json_output else sys.stdout
     renderer = RunRenderer(progress, plain=use_plain(progress, plain_flag=plain))
     try:
-        result = asyncio.run(_execute_with_sigint(prepared.spec, renderer))
+        result = asyncio.run(
+            _execute_with_sigint(
+                lambda cancel_event: execute_run(
+                    prepared.spec, render_cb=renderer.on_event, cancel_event=cancel_event
+                )
+            )
+        )
     finally:
         renderer.close()
         prepared.logger.close()
@@ -197,6 +220,134 @@ def run(
     if json_output:
         sys.stdout.write(result.model_dump_json(indent=2) + "\n")
     raise typer.Exit(exit_code_for(result))
+
+
+# ---------------------------------------------------------------- workflow
+
+
+@workflow_app.command("run")
+def workflow_run(
+    name_or_path: Annotated[
+        str, typer.Argument(help="Discovered workflow name, or a direct YAML path.")
+    ],
+    var: Annotated[
+        list[str] | None,
+        typer.Option("--var", help="Typed workflow variable NAME=VALUE (repeatable)."),
+    ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="stdout carries only the final RunResult JSON."),
+    ] = False,
+    no_save: Annotated[bool, typer.Option("--no-save", help="Do not persist this run.")] = False,
+    capture: Annotated[
+        CaptureProfile | None,
+        typer.Option("--capture", help="Capture profile override (direct user intent)."),
+    ] = None,
+    plain: Annotated[
+        bool, typer.Option("--plain", help="Line-oriented output without ANSI escapes.")
+    ] = False,
+    acknowledge_egress: Annotated[
+        str | None,
+        typer.Option(
+            "--acknowledge-egress",
+            help="Comma-separated provider set whose egress is acknowledged.",
+        ),
+    ] = None,
+) -> None:
+    """Execute one constrained workflow serially in deterministic order."""
+    workspace = Path.cwd()
+    resolved = _load_config(workspace)
+    overrides = RunOverrides(
+        no_save=no_save,
+        capture=capture,
+        acknowledge_egress=_parse_provider_flag(acknowledge_egress),
+    )
+    try:
+        cli_vars = parse_var_args(var or [])
+        prepared = prepare_workflow(
+            resolved,
+            name_or_path=name_or_path,
+            cli_vars=cli_vars,
+            workspace=workspace,
+            overrides=overrides,
+        )
+    except ZiggyError as exc:
+        _fail(exc)
+    progress = sys.stderr if json_output else sys.stdout
+    renderer = RunRenderer(progress, plain=use_plain(progress, plain_flag=plain))
+    try:
+        result = asyncio.run(
+            _execute_with_sigint(
+                lambda cancel_event: execute_workflow(
+                    prepared, render_cb=renderer.on_event, cancel_event=cancel_event
+                )
+            )
+        )
+    finally:
+        renderer.close()
+        if prepared.logger is not None:
+            prepared.logger.close()
+    renderer.finish(result)
+    if json_output:
+        sys.stdout.write(result.model_dump_json(indent=2) + "\n")
+    raise typer.Exit(exit_code_for(result))
+
+
+def _variables_summary(definition: WorkflowDef) -> str:
+    """Compact declared-variable summary for the workflow list table."""
+    if not definition.variables:
+        return "-"
+    parts: list[str] = []
+    for name, decl in definition.variables.items():
+        marker = "*" if decl.required else ""
+        secret = " (secret)" if decl.secret else ""
+        parts.append(f"{name}:{decl.type}{marker}{secret}")
+    return ", ".join(parts)
+
+
+@workflow_app.command("list")
+def workflow_list(
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit discovered workflows as JSON.")
+    ] = False,
+) -> None:
+    """Discovered workflows (project scope, then user scope)."""
+    try:
+        found = discover(Path.cwd())
+    except ZiggyError as exc:
+        _fail(exc)  # duplicate names exit 2 naming both paths
+    entries = sorted(found.values(), key=lambda wf: wf.name)
+    if json_output:
+        document = [
+            {
+                "name": wf.name,
+                "scope": wf.source_scope,
+                "path": str(wf.path),
+                "description": wf.definition.description,
+                "variables": {
+                    name: decl.model_dump(mode="json")
+                    for name, decl in wf.definition.variables.items()
+                },
+            }
+            for wf in entries
+        ]
+        print(json.dumps(document, indent=2))
+        return
+    if not entries:
+        print("no workflows found")
+        return
+    rows = [
+        (
+            wf.name,
+            wf.source_scope,
+            str(wf.path),
+            wf.definition.description or "-",
+            _variables_summary(wf.definition),
+        )
+        for wf in entries
+    ]
+    for line in format_table(("name", "scope", "path", "description", "variables"), rows):
+        print(line)
 
 
 # ------------------------------------------------------------------- agents

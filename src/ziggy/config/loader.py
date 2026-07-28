@@ -72,6 +72,8 @@ _TIGHTEN_MIN_PATHS: frozenset[str] = frozenset(
 _CAPTURE_PATH = "results.capture"
 _DENIALS_PATH = "permissions.project_denials"
 _PROJECT_OK_PATHS: frozenset[str] = frozenset({"workflows.default_name"})
+# NOTE: workflows.secret_variable_allowances.* is deliberately unlisted — the
+# fail-closed default below keeps it USER_ONLY (project scope rejected).
 
 
 def merge_rule_for(path: str) -> MergeRule:

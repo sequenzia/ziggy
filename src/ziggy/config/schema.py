@@ -114,6 +114,9 @@ class LogsConfig(_Section):
 
 class WorkflowsConfig(_Section):
     default_name: str | None = None  # PROJECT_OK
+    #: USER_ONLY: secret variable name -> provider names allowed to receive its
+    #: value via prompt interpolation (REQ-011). Unlisted pairs are denied.
+    secret_variable_allowances: dict[str, list[str]] = {}
 
 
 class AgentEntry(_Section):

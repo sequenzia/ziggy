@@ -23,6 +23,7 @@ IGNORE_CANCEL = "ignore_cancel"
 SLOW_STREAM = "slow_stream"
 SECRET_LEAK = "secret_leak"
 ENV_ECHO = "env_echo"
+ECHO_PROMPT = "echo_prompt"
 
 ALL_SCENARIOS: tuple[str, ...] = (
     HELLO,
@@ -35,6 +36,7 @@ ALL_SCENARIOS: tuple[str, ...] = (
     SLOW_STREAM,
     SECRET_LEAK,
     ENV_ECHO,
+    ECHO_PROMPT,
 )
 
 #: Scenarios the SDK-backed fixture (sdk_agent.py) supports.
@@ -138,3 +140,10 @@ SECRET_LEAK_POST_TOOL_CHUNKS: tuple[str, ...] = ("env secret: " + SEEDED_SECRETS
 # --- env_echo -------------------------------------------------------------
 
 ENV_ECHO_SEPARATOR = ","
+
+# --- echo_prompt ----------------------------------------------------------
+
+#: The received prompt text is echoed back verbatim as agent_message_chunk
+#: updates of at most this many characters each, so workflow tests can assert
+#: the EXACT composed prompt a downstream step received (delimiters included).
+ECHO_PROMPT_CHUNK_CHARS = 4096

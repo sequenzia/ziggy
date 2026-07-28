@@ -43,6 +43,7 @@ class MockAgent:
         self._next_request_id = scenarios.AGENT_REQUEST_ID_START
         self._pending: dict[Any, asyncio.Future[dict[str, Any]]] = {}
         self._session_cwd: dict[str, str] = {}
+        self._session_prompt: dict[str, str] = {}
         self._session_counter = 0
         self._cancelled = asyncio.Event()
         self._prompt_tasks: set[asyncio.Task[None]] = set()
@@ -57,6 +58,7 @@ class MockAgent:
             scenarios.SLOW_STREAM: self._scenario_slow_stream,
             scenarios.SECRET_LEAK: self._scenario_secret_leak,
             scenarios.ENV_ECHO: self._scenario_env_echo,
+            scenarios.ECHO_PROMPT: self._scenario_echo_prompt,
         }
 
     # --- wire helpers ----------------------------------------------------
@@ -156,8 +158,21 @@ class MockAgent:
             },
         }
 
+    @staticmethod
+    def _prompt_text(params: dict[str, Any]) -> str:
+        """Concatenated text of the prompt's content blocks (wire shape)."""
+        blocks = params.get("prompt")
+        if not isinstance(blocks, list):
+            return ""
+        return "".join(
+            str(block.get("text", ""))
+            for block in blocks
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+
     async def _run_prompt(self, request_id: Any, params: dict[str, Any]) -> None:
         session_id = str(params.get("sessionId", ""))
+        self._session_prompt[session_id] = self._prompt_text(params)
         stop_reason = await self._handlers[self.scenario](session_id)
         if stop_reason is not None:
             self._send_result(request_id, {"stopReason": stop_reason})
@@ -326,6 +341,18 @@ class MockAgent:
 
     async def _scenario_env_echo(self, session_id: str) -> str | None:
         self._chunk(session_id, scenarios.ENV_ECHO_SEPARATOR.join(sorted(os.environ)))
+        return "end_turn"
+
+    async def _scenario_echo_prompt(self, session_id: str) -> str | None:
+        """Echo the received prompt text back verbatim as message chunks.
+
+        Lets workflow tests observe the EXACT composed prompt a step received
+        (untrusted-input delimiters and any literal template tokens included).
+        """
+        text = self._session_prompt.get(session_id, "")
+        step = scenarios.ECHO_PROMPT_CHUNK_CHARS
+        for start in range(0, len(text), step):
+            self._chunk(session_id, text[start : start + step])
         return "end_turn"
 
 

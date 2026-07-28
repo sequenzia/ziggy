@@ -13,6 +13,13 @@ lifecycle lines (launch, handshake, prompt-start, permission decisions,
 cancellation/termination, persistence). A plain Phase-1 spec behaves exactly
 as before.
 
+Phase 3 extracts the per-step core into :func:`execute_step` — launch,
+handshake, session, prompt, and teardown of ONE agent subprocess, driven by a
+:class:`StepExecutionContext` — so direct runs and workflow steps share one
+execution path. ``execute_run`` keeps its exact public contract and delegates
+to ``execute_step`` for its ``main`` step; the workflow runner
+(``ziggy.workflows.runner``) builds one context per workflow step.
+
 Stop-reason mapping (documented decision): ``end_turn`` is the only stop
 reason that makes the step ``success``. ``cancelled`` maps to a ``cancelled``
 step with a ``CancelledError`` — whether Ziggy requested the cancel or the
@@ -36,7 +43,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping
 from contextlib import suppress
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -152,7 +159,61 @@ class RunSpec:
 
 
 @dataclass(slots=True)
-class _StepOutcome:
+class StepExecutionContext:
+    """Everything :func:`execute_step` needs to run ONE agent step (Phase 3).
+
+    The context is deliberately launch-shaped (command/args/env/cwd), not
+    config-shaped: the caller — ``execute_run`` for the implicit ``main`` step,
+    ``ziggy.workflows.runner`` per workflow step — has already resolved agent
+    registration, per-step policy, timeouts, and the composed prompt.
+
+    ``session_label`` is the human-readable agent label attached to metadata
+    log lines and step events (the ziggy-registered agent name in practice).
+    ``recorder`` is the run-wide :class:`RunRecorder`; every event emitted for
+    this step carries ``step_id``/``attempt_no`` from here. ``policy=None``
+    selects the Phase-1 default-deny hooks (no mediated serving).
+    """
+
+    step_id: str
+    command: str
+    args: list[str]
+    env: dict[str, str]
+    cwd: str
+    prompt: str
+    timeout_seconds: float
+    grace_seconds: float
+    recorder: RunRecorder
+    session_label: str
+    policy: MediationPolicy | None = None
+    logger: MetadataLoggerLike | None = None
+    cancel_event: asyncio.Event | None = None
+    attempt_no: int = 1
+    _hooks: RecordingHooks | None = field(default=None, repr=False, init=False)
+
+    def hooks(self) -> RecordingHooks:
+        """The step's mediation hooks (policy-backed when a policy is set)."""
+        if self._hooks is None:
+            if self.policy is not None:
+                self._hooks = PolicyHooks(
+                    recorder=self.recorder,
+                    policy=self.policy,
+                    logger=self.logger,
+                    step_id=self.step_id,
+                    attempt_no=self.attempt_no,
+                )
+            else:
+                self._hooks = RecordingHooks(
+                    recorder=self.recorder,
+                    step_id=self.step_id,
+                    attempt_no=self.attempt_no,
+                )
+        return self._hooks
+
+
+@dataclass(slots=True)
+class StepOutcome:
+    """Terminal outcome of one :func:`execute_step` invocation."""
+
     status: StepStatus
     error: ZiggyError | None = None
     stop_reason: str | None = None
@@ -190,11 +251,18 @@ def _mlog(
         logger.log(event, run_id=run_id, step_id=step_id, agent=agent, level=level, **detail)
 
 
-def _emit_error(recorder: RunRecorder, error: ZiggyError, *, session_id: str | None = None) -> None:
+def _emit_error(
+    recorder: RunRecorder,
+    error: ZiggyError,
+    *,
+    step_id: str,
+    attempt_no: int = 1,
+    session_id: str | None = None,
+) -> None:
     recorder.emit(
         event_type="error",
-        step_id=MAIN_STEP_ID,
-        attempt_no=1,
+        step_id=step_id,
+        attempt_no=attempt_no,
         session_id=session_id,
         payload={"code": error.code, "message": error.message, "details": error.details},
     )
@@ -231,14 +299,14 @@ async def _cancel_ladder(
 def _stop_outcome(
     stop: StopInfo,
     *,
+    ctx: StepExecutionContext,
     exit_code: int | None,
     handshake: HandshakeInfo,
     session_id: str,
-    recorder: RunRecorder,
-) -> _StepOutcome:
+) -> StepOutcome:
     reason = stop.stop_reason
     if reason == "end_turn":
-        return _StepOutcome(
+        return StepOutcome(
             status=StepStatus.SUCCESS,
             stop_reason=reason,
             exit_code=exit_code,
@@ -249,8 +317,14 @@ def _stop_outcome(
         error: ZiggyError = CancelledError(
             "agent reported the turn as cancelled", details={"stop_reason": reason}
         )
-        _emit_error(recorder, error, session_id=session_id)
-        return _StepOutcome(
+        _emit_error(
+            ctx.recorder,
+            error,
+            step_id=ctx.step_id,
+            attempt_no=ctx.attempt_no,
+            session_id=session_id,
+        )
+        return StepOutcome(
             status=StepStatus.CANCELLED,
             error=error,
             stop_reason=reason,
@@ -262,8 +336,14 @@ def _stop_outcome(
     error = ProtocolError(
         f"turn ended without completing: {reason}", details={"stop_reason": reason}
     )
-    _emit_error(recorder, error, session_id=session_id)
-    return _StepOutcome(
+    _emit_error(
+        ctx.recorder,
+        error,
+        step_id=ctx.step_id,
+        attempt_no=ctx.attempt_no,
+        session_id=session_id,
+    )
+    return StepOutcome(
         status=StepStatus.FAILED,
         error=error,
         stop_reason=reason,
@@ -273,47 +353,53 @@ def _stop_outcome(
     )
 
 
-async def _drive_step(
-    spec: RunSpec,
-    recorder: RunRecorder,
-    hooks: RecordingHooks,
-    cancel_event: asyncio.Event | None,
-) -> _StepOutcome:
-    """Launch, handshake, prompt, and tear down one agent subprocess."""
+async def execute_step(ctx: StepExecutionContext) -> StepOutcome:
+    """Launch, handshake, prompt, and tear down one agent subprocess.
+
+    The shared per-step core of direct runs and workflow steps: a fresh
+    subprocess + ACP session per invocation, the full teardown ladder on
+    timeout/cancel, and every event recorded with the context's
+    ``step_id``/``attempt_no``. Never raises for agent-side failure — the
+    outcome carries the typed error; only caller bugs (bad context) escape.
+    The caller emits ``step_started``/``step_finished`` and owns
+    StepResult/Attempt bookkeeping (see :func:`settle_step_result`).
+    """
+    recorder = ctx.recorder
+    hooks = ctx.hooks()
     recorder.emit(
         event_type="agent_launching",
-        step_id=MAIN_STEP_ID,
-        attempt_no=1,
-        payload={"command": spec.command, "args": list(spec.args)},
+        step_id=ctx.step_id,
+        attempt_no=ctx.attempt_no,
+        payload={"command": ctx.command, "args": list(ctx.args)},
     )
     try:
         client = await AgentProcessClient.launch(
-            command=spec.command, args=spec.args, env=spec.env, cwd=spec.cwd, hooks=hooks
+            command=ctx.command, args=ctx.args, env=ctx.env, cwd=ctx.cwd, hooks=hooks
         )
     except AgentLaunchError as exc:
-        _emit_error(recorder, exc)
+        _emit_error(recorder, exc, step_id=ctx.step_id, attempt_no=ctx.attempt_no)
         _mlog(
-            spec.logger,
+            ctx.logger,
             "agent_launch_failed",
             run_id=recorder.run_id,
-            step_id=MAIN_STEP_ID,
-            agent=spec.agent_name,
+            step_id=ctx.step_id,
+            agent=ctx.session_label,
             level="error",
             reason_code=exc.code,
         )
-        return _StepOutcome(status=StepStatus.FAILED, error=exc)
+        return StepOutcome(status=StepStatus.FAILED, error=exc)
     recorder.emit(
         event_type="agent_launched",
-        step_id=MAIN_STEP_ID,
-        attempt_no=1,
+        step_id=ctx.step_id,
+        attempt_no=ctx.attempt_no,
         payload={"pid": client.pid, "pgid": client.pgid},
     )
     _mlog(
-        spec.logger,
+        ctx.logger,
         "agent_launched",
         run_id=recorder.run_id,
-        step_id=MAIN_STEP_ID,
-        agent=spec.agent_name,
+        step_id=ctx.step_id,
+        agent=ctx.session_label,
     )
 
     shutdown_done = False
@@ -327,9 +413,9 @@ async def _drive_step(
         try:
             handshake = await client.initialize()
         except ProtocolError as exc:
-            _emit_error(recorder, exc)
+            _emit_error(recorder, exc, step_id=ctx.step_id, attempt_no=ctx.attempt_no)
             exit_code = await shutdown()
-            return _StepOutcome(
+            return StepOutcome(
                 status=StepStatus.FAILED,
                 error=exc,
                 exit_code=exit_code,
@@ -337,24 +423,24 @@ async def _drive_step(
             )
         recorder.emit(
             event_type="handshake",
-            step_id=MAIN_STEP_ID,
-            attempt_no=1,
+            step_id=ctx.step_id,
+            attempt_no=ctx.attempt_no,
             payload=asdict(handshake),
         )
         _mlog(
-            spec.logger,
+            ctx.logger,
             "handshake",
             run_id=recorder.run_id,
-            step_id=MAIN_STEP_ID,
-            agent=spec.agent_name,
+            step_id=ctx.step_id,
+            agent=ctx.session_label,
         )
 
         try:
-            session_id = await client.new_session(spec.cwd)
+            session_id = await client.new_session(ctx.cwd)
         except ProtocolError as exc:
-            _emit_error(recorder, exc)
+            _emit_error(recorder, exc, step_id=ctx.step_id, attempt_no=ctx.attempt_no)
             exit_code = await shutdown()
-            return _StepOutcome(
+            return StepOutcome(
                 status=StepStatus.FAILED,
                 error=exc,
                 exit_code=exit_code,
@@ -364,43 +450,43 @@ async def _drive_step(
         hooks.session_id = session_id
         recorder.emit(
             event_type="session_created",
-            step_id=MAIN_STEP_ID,
-            attempt_no=1,
+            step_id=ctx.step_id,
+            attempt_no=ctx.attempt_no,
             session_id=session_id,
-            payload={"session_id": session_id, "cwd": spec.cwd},
+            payload={"session_id": session_id, "cwd": ctx.cwd},
         )
         _mlog(
-            spec.logger,
+            ctx.logger,
             "session_created",
             run_id=recorder.run_id,
-            step_id=MAIN_STEP_ID,
-            agent=spec.agent_name,
+            step_id=ctx.step_id,
+            agent=ctx.session_label,
         )
         recorder.emit(
             event_type="prompt_started",
-            step_id=MAIN_STEP_ID,
-            attempt_no=1,
+            step_id=ctx.step_id,
+            attempt_no=ctx.attempt_no,
             session_id=session_id,
-            payload={"text": spec.prompt},
+            payload={"text": ctx.prompt},
         )
         _mlog(
-            spec.logger,
+            ctx.logger,
             "prompt_started",
             run_id=recorder.run_id,
-            step_id=MAIN_STEP_ID,
-            agent=spec.agent_name,
+            step_id=ctx.step_id,
+            agent=ctx.session_label,
         )
 
-        prompt_task = asyncio.create_task(client.prompt(session_id, spec.prompt))
+        prompt_task = asyncio.create_task(client.prompt(session_id, ctx.prompt))
         cancel_task: asyncio.Task[bool] | None = None
         waiters: set[asyncio.Task] = {prompt_task}
-        if cancel_event is not None:
-            cancel_task = asyncio.create_task(cancel_event.wait())
+        if ctx.cancel_event is not None:
+            cancel_task = asyncio.create_task(ctx.cancel_event.wait())
             waiters.add(cancel_task)
         try:
             done, _ = await asyncio.wait(
                 waiters,
-                timeout=spec.step_timeout_seconds,
+                timeout=ctx.timeout_seconds,
                 return_when=asyncio.FIRST_COMPLETED,
             )
         finally:
@@ -413,25 +499,31 @@ async def _drive_step(
             try:
                 stop = prompt_task.result()
             except ProtocolError as exc:
-                _emit_error(recorder, exc, session_id=session_id)
+                _emit_error(
+                    recorder,
+                    exc,
+                    step_id=ctx.step_id,
+                    attempt_no=ctx.attempt_no,
+                    session_id=session_id,
+                )
                 exit_code = await shutdown()
                 recorder.emit(
                     event_type="terminated",
-                    step_id=MAIN_STEP_ID,
-                    attempt_no=1,
+                    step_id=ctx.step_id,
+                    attempt_no=ctx.attempt_no,
                     session_id=session_id,
                     payload={"exit_code": exit_code, "reason": "protocol_error"},
                 )
                 _mlog(
-                    spec.logger,
+                    ctx.logger,
                     "terminated",
                     run_id=recorder.run_id,
-                    step_id=MAIN_STEP_ID,
-                    agent=spec.agent_name,
+                    step_id=ctx.step_id,
+                    agent=ctx.session_label,
                     exit_code=exit_code,
                     reason_code="protocol_error",
                 )
-                return _StepOutcome(
+                return StepOutcome(
                     status=StepStatus.FAILED,
                     error=exc,
                     exit_code=exit_code,
@@ -442,63 +534,61 @@ async def _drive_step(
             exit_code = await shutdown()
             recorder.emit(
                 event_type="terminated",
-                step_id=MAIN_STEP_ID,
-                attempt_no=1,
+                step_id=ctx.step_id,
+                attempt_no=ctx.attempt_no,
                 session_id=session_id,
                 payload={"exit_code": exit_code, "reason": "turn_complete"},
             )
             _mlog(
-                spec.logger,
+                ctx.logger,
                 "terminated",
                 run_id=recorder.run_id,
-                step_id=MAIN_STEP_ID,
-                agent=spec.agent_name,
+                step_id=ctx.step_id,
+                agent=ctx.session_label,
                 exit_code=exit_code,
                 reason_code="turn_complete",
                 stop_reason=stop.stop_reason,
             )
             return _stop_outcome(
                 stop,
+                ctx=ctx,
                 exit_code=exit_code,
                 handshake=handshake,
                 session_id=session_id,
-                recorder=recorder,
             )
 
         cancelled = cancel_task is not None and cancel_task in done
         reason = "cancel" if cancelled else "timeout"
         recorder.emit(
             event_type="cancel_requested",
-            step_id=MAIN_STEP_ID,
-            attempt_no=1,
+            step_id=ctx.step_id,
+            attempt_no=ctx.attempt_no,
             session_id=session_id,
-            payload={"reason": reason, "grace_seconds": spec.cancel_grace_seconds},
+            payload={"reason": reason, "grace_seconds": ctx.grace_seconds},
         )
         _mlog(
-            spec.logger,
+            ctx.logger,
             "cancel_requested",
             run_id=recorder.run_id,
-            step_id=MAIN_STEP_ID,
-            agent=spec.agent_name,
+            step_id=ctx.step_id,
+            agent=ctx.session_label,
             reason_code=reason,
         )
         shutdown_done = True  # the ladder owns teardown from here
-        exit_code, stop = await _cancel_ladder(
-            client, session_id, prompt_task, spec.cancel_grace_seconds
-        )
+        exit_code, stop = await _cancel_ladder(client, session_id, prompt_task, ctx.grace_seconds)
         recorder.emit(
             event_type="terminated",
-            step_id=MAIN_STEP_ID,
-            attempt_no=1,
+            step_id=ctx.step_id,
+            attempt_no=ctx.attempt_no,
             session_id=session_id,
             payload={"exit_code": exit_code, "reason": reason},
         )
         _mlog(
-            spec.logger,
+            ctx.logger,
             "terminated",
             run_id=recorder.run_id,
-            step_id=MAIN_STEP_ID,
-            agent=spec.agent_name,
+            step_id=ctx.step_id,
+            agent=ctx.session_label,
             exit_code=exit_code,
             reason_code=reason,
         )
@@ -507,8 +597,14 @@ async def _drive_step(
             error: ZiggyError = CancelledError(
                 "run cancelled", details={"stop_reason": stop_reason}
             )
-            _emit_error(recorder, error, session_id=session_id)
-            return _StepOutcome(
+            _emit_error(
+                recorder,
+                error,
+                step_id=ctx.step_id,
+                attempt_no=ctx.attempt_no,
+                session_id=session_id,
+            )
+            return StepOutcome(
                 status=StepStatus.CANCELLED,
                 error=error,
                 stop_reason=stop_reason,
@@ -518,14 +614,20 @@ async def _drive_step(
                 capture_degraded=True,
             )
         error = StepTimeoutError(
-            f"step '{MAIN_STEP_ID}' exceeded {spec.step_timeout_seconds}s",
+            f"step '{ctx.step_id}' exceeded {ctx.timeout_seconds}s",
             details={
-                "timeout_seconds": spec.step_timeout_seconds,
+                "timeout_seconds": ctx.timeout_seconds,
                 "stop_reason": stop_reason,
             },
         )
-        _emit_error(recorder, error, session_id=session_id)
-        return _StepOutcome(
+        _emit_error(
+            recorder,
+            error,
+            step_id=ctx.step_id,
+            attempt_no=ctx.attempt_no,
+            session_id=session_id,
+        )
+        return StepOutcome(
             status=StepStatus.FAILED,
             error=error,
             stop_reason=stop_reason,
@@ -539,13 +641,65 @@ async def _drive_step(
             await client.shutdown(0.0)
 
 
-def _degrade_capture(result: RunResult) -> None:
+def settle_step_result(
+    *,
+    step: StepResult,
+    attempt: Attempt,
+    outcome: StepOutcome,
+    duration_ms: int,
+    recorder: RunRecorder,
+    redactor: Redactor,
+    agent_name: str,
+    provider: str | None,
+) -> None:
+    """Fill one StepResult + Attempt pair from a settled :class:`StepOutcome`.
+
+    Shared by ``execute_run`` and the workflow runner: attempt bookkeeping,
+    typed errors, handshake-derived :class:`AgentInfo`, and the recorder
+    aggregations (tool calls, file changes, permission decisions). The
+    assembled transcript is re-redacted before becoming ``outputs['text']``:
+    a secret split across stream chunks is invisible per-chunk but contiguous
+    (and matchable) once concatenated. ``inputs_resolved``/``input_sources``
+    stay with the caller — they are run-kind specific.
+    """
+    attempt.ended_at = utc_now_iso()
+    attempt.duration_ms = duration_ms
+    attempt.status = outcome.status
+    attempt.stop_reason = outcome.stop_reason
+    attempt.exit_code = outcome.exit_code
+    if outcome.error is not None:
+        attempt.errors = [outcome.error.to_model()]
+        step.errors = [outcome.error.to_model()]
+
+    if outcome.handshake is not None:
+        step.agent_info = AgentInfo(
+            name=agent_name,
+            provider=provider,
+            protocol_version=outcome.handshake.protocol_version,
+            agent_name=outcome.handshake.agent_name,
+            agent_title=outcome.handshake.agent_title,
+            agent_version=outcome.handshake.agent_version,
+            capabilities=outcome.handshake.capabilities,
+            auth_methods=outcome.handshake.auth_methods,
+        )
+
+    assembled_text, _ = redactor.redact_text(recorder.text_output(step.step_id))
+    step.outputs = {"text": assembled_text}
+    step.tool_calls = recorder.tool_calls(step.step_id)
+    step.file_changes = recorder.file_changes(step.step_id)
+    step.permission_decisions = recorder.permission_decisions(step.step_id)
+    step.attempts = [attempt]
+    step.status = outcome.status
+
+
+def degrade_capture(result: RunResult) -> None:
+    """Degrade every capture entry to at least ``partial`` (interrupted turn)."""
     for entry in result.capture.values():
         if _CAPTURE_SEVERITY[entry.status] < _CAPTURE_SEVERITY[CaptureStatus.PARTIAL]:
             entry.status = CaptureStatus.PARTIAL
 
 
-def _persist(result: RunResult, writer: RunDirWriter, index_db: Path) -> None:
+def persist_result(result: RunResult, writer: RunDirWriter, index_db: Path) -> None:
     """Atomic manifest first; index row only once the manifest is durable."""
     result.persisted = True
     result.result_path = str(writer.run_dir / "result.json")
@@ -643,17 +797,6 @@ async def execute_run(
         render_cb=render_cb,
         clock=clock,
     )
-    hooks: RecordingHooks
-    if spec.policy is not None:
-        hooks = PolicyHooks(
-            recorder=recorder,
-            policy=spec.policy,
-            logger=spec.logger,
-            step_id=MAIN_STEP_ID,
-            attempt_no=1,
-        )
-    else:
-        hooks = RecordingHooks(recorder=recorder, step_id=MAIN_STEP_ID, attempt_no=1)
 
     recorder.emit(
         event_type="run_started",
@@ -706,41 +849,38 @@ async def execute_run(
     attempt = Attempt(attempt_no=1, status=StepStatus.FAILED, started_at=utc_now_iso())
     attempt_start_ms = clock.elapsed_ms()
 
-    outcome = await _drive_step(spec, recorder, hooks, cancel_event)
-
-    attempt.ended_at = utc_now_iso()
-    attempt.duration_ms = clock.elapsed_ms() - attempt_start_ms
-    attempt.status = outcome.status
-    attempt.stop_reason = outcome.stop_reason
-    attempt.exit_code = outcome.exit_code
-    if outcome.error is not None:
-        attempt.errors = [outcome.error.to_model()]
-        step.errors = [outcome.error.to_model()]
-
-    if outcome.handshake is not None:
-        step.agent_info = AgentInfo(
-            name=spec.agent_name,
-            provider=spec.provider,
-            protocol_version=outcome.handshake.protocol_version,
-            agent_name=outcome.handshake.agent_name,
-            agent_title=outcome.handshake.agent_title,
-            agent_version=outcome.handshake.agent_version,
-            capabilities=outcome.handshake.capabilities,
-            auth_methods=outcome.handshake.auth_methods,
+    outcome = await execute_step(
+        StepExecutionContext(
+            step_id=MAIN_STEP_ID,
+            command=spec.command,
+            args=list(spec.args),
+            env=spec.env,
+            cwd=spec.cwd,
+            prompt=spec.prompt,
+            timeout_seconds=spec.step_timeout_seconds,
+            grace_seconds=spec.cancel_grace_seconds,
+            recorder=recorder,
+            session_label=spec.agent_name,
+            policy=spec.policy,
+            logger=spec.logger,
+            cancel_event=cancel_event,
+            attempt_no=1,
         )
+    )
 
+    settle_step_result(
+        step=step,
+        attempt=attempt,
+        outcome=outcome,
+        duration_ms=clock.elapsed_ms() - attempt_start_ms,
+        recorder=recorder,
+        redactor=redactor,
+        agent_name=spec.agent_name,
+        provider=spec.provider,
+    )
     redacted_prompt, _ = redactor.redact_text(spec.prompt)
     step.inputs_resolved = {"prompt": redacted_prompt}
     step.input_sources = {"prompt": "direct:prompt"}
-    # Re-redact the assembled transcript: a secret split across stream chunks
-    # is invisible per-chunk but contiguous (and matchable) once concatenated.
-    assembled_text, _ = redactor.redact_text(recorder.text_output(MAIN_STEP_ID))
-    step.outputs = {"text": assembled_text}
-    step.tool_calls = recorder.tool_calls(MAIN_STEP_ID)
-    step.file_changes = recorder.file_changes(MAIN_STEP_ID)
-    step.permission_decisions = recorder.permission_decisions(MAIN_STEP_ID)
-    step.attempts = [attempt]
-    step.status = outcome.status
     result.status = _RUN_STATUS_OF_STEP[outcome.status]
 
     recorder.emit(
@@ -764,7 +904,7 @@ async def execute_run(
 
     result.capture = recorder.capture_summary()
     if outcome.capture_degraded:
-        _degrade_capture(result)
+        degrade_capture(result)
     result.redaction = recorder.redaction_summary()
     usage = recorder.usage_summary()
     if usage is not None and usage.provider is None:
@@ -794,7 +934,7 @@ async def execute_run(
 
     if writer is not None and index_db is not None:
         try:
-            _persist(result, writer, index_db)
+            persist_result(result, writer, index_db)
         finally:
             writer.finalize()
         if result.persisted:
