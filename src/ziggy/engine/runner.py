@@ -1,9 +1,17 @@
-"""Phase-1 direct-run engine (REQ-004/005, §5.1, §6.4).
+"""Direct-run engine (REQ-004/005, §5.1, §6.4).
 
 ``execute_run`` drives one agent through one implicit step named ``main`` and
 always returns a full :class:`RunResult`; run-level failures live inside the
 result as typed errors, never as raised exceptions. The caller (CLI in Phase
 2) maps result contents to exit codes.
+
+Phase 2 wires config, policy, and metadata logs through :class:`RunSpec`
+(see the dataclass docstring): a spec built by ``prepare_run`` carries the
+guarded mediation policy (served by :class:`PolicyHooks`), exact-value
+redaction seeds, the config fingerprint, and a metadata logger emitting
+lifecycle lines (launch, handshake, prompt-start, permission decisions,
+cancellation/termination, persistence). A plain Phase-1 spec behaves exactly
+as before.
 
 Stop-reason mapping (documented decision): ``end_turn`` is the only stop
 reason that makes the step ``success``. ``cancelled`` maps to a ``cancelled``
@@ -30,9 +38,16 @@ from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 from ziggy.acp import AgentProcessClient, HandshakeInfo, StopInfo
-from ziggy.engine.hooks import DEFAULT_DENY_POLICY_NAME, DEFAULT_DENY_RULE_ID, RecordingHooks
+from ziggy.engine.hooks import (
+    DEFAULT_DENY_POLICY_NAME,
+    DEFAULT_DENY_RULE_ID,
+    MetadataLoggerLike,
+    PolicyHooks,
+    RecordingHooks,
+)
 from ziggy.errors import (
     AgentLaunchError,
     CancelledError,
@@ -60,7 +75,8 @@ from ziggy.models.result import (
     RunResult,
     StepResult,
 )
-from ziggy.redact import Redactor
+from ziggy.policy import MediationPolicy, build_policy_provenance
+from ziggy.redact import CustomPattern, Redactor
 from ziggy.store import IndexRow, RunDirWriter, RunIndex, RunStore
 
 MAIN_STEP_ID = "main"
@@ -90,11 +106,27 @@ _CAPTURE_SEVERITY: dict[CaptureStatus, int] = {
 class RunSpec:
     """Fully-resolved inputs for one direct agent run.
 
-    This is the Phase-1 stand-in for the config layer: Phase 2 constructs it
-    from merged trusted config + CLI flags. ``env`` is the complete explicit
-    subprocess environment (nothing is inherited implicitly).
-    ``store_root=None`` uses the RunStore default (``$ZIGGY_HOME`` or
-    ``~/.ziggy``).
+    Phase 2 constructs this from merged trusted config + CLI flags via
+    :func:`ziggy.engine.prepare.prepare_run`; direct construction with only
+    the Phase-1 fields remains supported (every Phase-2 field defaults to the
+    Phase-1 behavior). ``env`` is the complete explicit subprocess environment
+    (nothing is inherited implicitly). ``store_root=None`` uses the RunStore
+    default (``$ZIGGY_HOME`` or ``~/.ziggy``).
+
+    Phase-2 extensions:
+
+    - ``secret_values``: exact-match ``(kind, value)`` pairs for the run's
+      Redactor (``api_key_env`` value + config ``redaction.extra_value_env_vars``).
+      ``None`` keeps the Phase-1 env-var *name* heuristic as a fallback.
+    - ``redaction_patterns``: config custom patterns, passed to the Redactor.
+    - ``policy``: guarded mediation policy; when present the run uses
+      :class:`PolicyHooks` instead of the Phase-1 default-deny hooks.
+    - ``policy_provenance``: RunResult policy snapshot (derived from
+      ``policy`` when omitted).
+    - ``logger``: metadata logger for lifecycle log lines (``None`` = silent).
+    - ``config_fingerprint``: resolved-config fingerprint for the RunResult.
+    - ``egress_acknowledged_by``: how the provider egress was acknowledged
+      (``config`` | ``flag:--acknowledge-egress``), recorded on EgressRecord.
     """
 
     agent_name: str
@@ -110,6 +142,13 @@ class RunSpec:
     provider: str | None = None
     limits: EventLimits = DEFAULT_LIMITS
     store_root: Path | None = None
+    secret_values: list[tuple[str, str]] | None = None
+    redaction_patterns: list[CustomPattern] | None = None
+    policy: MediationPolicy | None = None
+    policy_provenance: PolicyProvenance | None = None
+    logger: MetadataLoggerLike | None = None
+    config_fingerprint: str | None = None
+    egress_acknowledged_by: str | None = None
 
 
 @dataclass(slots=True)
@@ -131,6 +170,24 @@ def _secret_env_values(env: Mapping[str, str]) -> list[tuple[str, str]]:
         for name, value in env.items()
         if value and any(marker in name.upper() for marker in _SECRET_ENV_MARKERS)
     ]
+
+
+def _mlog(
+    logger: MetadataLoggerLike | None,
+    event: str,
+    *,
+    run_id: str,
+    step_id: str | None = None,
+    agent: str | None = None,
+    level: str = "info",
+    **detail: Any,
+) -> None:
+    """Best-effort metadata-log line (REQ-016): write failures never disturb
+    the run; detail-allowlist misuse (``ValueError``) stays loud."""
+    if logger is None:
+        return
+    with suppress(PersistenceError):
+        logger.log(event, run_id=run_id, step_id=step_id, agent=agent, level=level, **detail)
 
 
 def _emit_error(recorder: RunRecorder, error: ZiggyError, *, session_id: str | None = None) -> None:
@@ -235,12 +292,28 @@ async def _drive_step(
         )
     except AgentLaunchError as exc:
         _emit_error(recorder, exc)
+        _mlog(
+            spec.logger,
+            "agent_launch_failed",
+            run_id=recorder.run_id,
+            step_id=MAIN_STEP_ID,
+            agent=spec.agent_name,
+            level="error",
+            reason_code=exc.code,
+        )
         return _StepOutcome(status=StepStatus.FAILED, error=exc)
     recorder.emit(
         event_type="agent_launched",
         step_id=MAIN_STEP_ID,
         attempt_no=1,
         payload={"pid": client.pid, "pgid": client.pgid},
+    )
+    _mlog(
+        spec.logger,
+        "agent_launched",
+        run_id=recorder.run_id,
+        step_id=MAIN_STEP_ID,
+        agent=spec.agent_name,
     )
 
     shutdown_done = False
@@ -268,6 +341,13 @@ async def _drive_step(
             attempt_no=1,
             payload=asdict(handshake),
         )
+        _mlog(
+            spec.logger,
+            "handshake",
+            run_id=recorder.run_id,
+            step_id=MAIN_STEP_ID,
+            agent=spec.agent_name,
+        )
 
         try:
             session_id = await client.new_session(spec.cwd)
@@ -289,12 +369,26 @@ async def _drive_step(
             session_id=session_id,
             payload={"session_id": session_id, "cwd": spec.cwd},
         )
+        _mlog(
+            spec.logger,
+            "session_created",
+            run_id=recorder.run_id,
+            step_id=MAIN_STEP_ID,
+            agent=spec.agent_name,
+        )
         recorder.emit(
             event_type="prompt_started",
             step_id=MAIN_STEP_ID,
             attempt_no=1,
             session_id=session_id,
             payload={"text": spec.prompt},
+        )
+        _mlog(
+            spec.logger,
+            "prompt_started",
+            run_id=recorder.run_id,
+            step_id=MAIN_STEP_ID,
+            agent=spec.agent_name,
         )
 
         prompt_task = asyncio.create_task(client.prompt(session_id, spec.prompt))
@@ -328,6 +422,15 @@ async def _drive_step(
                     session_id=session_id,
                     payload={"exit_code": exit_code, "reason": "protocol_error"},
                 )
+                _mlog(
+                    spec.logger,
+                    "terminated",
+                    run_id=recorder.run_id,
+                    step_id=MAIN_STEP_ID,
+                    agent=spec.agent_name,
+                    exit_code=exit_code,
+                    reason_code="protocol_error",
+                )
                 return _StepOutcome(
                     status=StepStatus.FAILED,
                     error=exc,
@@ -343,6 +446,16 @@ async def _drive_step(
                 attempt_no=1,
                 session_id=session_id,
                 payload={"exit_code": exit_code, "reason": "turn_complete"},
+            )
+            _mlog(
+                spec.logger,
+                "terminated",
+                run_id=recorder.run_id,
+                step_id=MAIN_STEP_ID,
+                agent=spec.agent_name,
+                exit_code=exit_code,
+                reason_code="turn_complete",
+                stop_reason=stop.stop_reason,
             )
             return _stop_outcome(
                 stop,
@@ -361,6 +474,14 @@ async def _drive_step(
             session_id=session_id,
             payload={"reason": reason, "grace_seconds": spec.cancel_grace_seconds},
         )
+        _mlog(
+            spec.logger,
+            "cancel_requested",
+            run_id=recorder.run_id,
+            step_id=MAIN_STEP_ID,
+            agent=spec.agent_name,
+            reason_code=reason,
+        )
         shutdown_done = True  # the ladder owns teardown from here
         exit_code, stop = await _cancel_ladder(
             client, session_id, prompt_task, spec.cancel_grace_seconds
@@ -371,6 +492,15 @@ async def _drive_step(
             attempt_no=1,
             session_id=session_id,
             payload={"exit_code": exit_code, "reason": reason},
+        )
+        _mlog(
+            spec.logger,
+            "terminated",
+            run_id=recorder.run_id,
+            step_id=MAIN_STEP_ID,
+            agent=spec.agent_name,
+            exit_code=exit_code,
+            reason_code=reason,
         )
         stop_reason = stop.stop_reason if stop is not None else None
         if cancelled:
@@ -464,6 +594,16 @@ async def execute_run(
     clock = MonotonicClock()
     started_at = utc_now_iso()
     step = StepResult(step_id=MAIN_STEP_ID, agent=spec.agent_name, status=StepStatus.FAILED)
+    if spec.policy is not None:
+        policy_provenance = spec.policy_provenance or build_policy_provenance(spec.policy)
+    else:
+        policy_provenance = PolicyProvenance(
+            policy_name=DEFAULT_DENY_POLICY_NAME,
+            ceiling_source="default",
+            rules=[{"rule_id": DEFAULT_DENY_RULE_ID, "action": "deny", "surface": "all"}],
+            enforcement="advisory",
+            enforcement_scope_default=EnforcementScope.ACP_MEDIATED,
+        )
     result = RunResult(
         run_id=run_id,
         kind=RunKind.AGENT,
@@ -473,13 +613,8 @@ async def execute_run(
         workspace=spec.cwd,
         capture_profile=spec.capture_profile,
         persisted=False,
-        policy=PolicyProvenance(
-            policy_name=DEFAULT_DENY_POLICY_NAME,
-            ceiling_source="default",
-            rules=[{"rule_id": DEFAULT_DENY_RULE_ID, "action": "deny", "surface": "all"}],
-            enforcement="advisory",
-            enforcement_scope_default=EnforcementScope.ACP_MEDIATED,
-        ),
+        config_fingerprint=spec.config_fingerprint,
+        policy=policy_provenance,
         steps={MAIN_STEP_ID: step},
     )
 
@@ -493,7 +628,12 @@ async def execute_run(
         except PersistenceError as exc:
             result.errors.append(exc.to_model())
 
-    redactor = Redactor(secret_values=_secret_env_values(spec.env))
+    # Exact-value seeding (Phase 2) wins; the env-var *name* heuristic remains
+    # the Phase-1 fallback when no resolved secret list was provided.
+    secret_values = (
+        spec.secret_values if spec.secret_values is not None else _secret_env_values(spec.env)
+    )
+    redactor = Redactor(secret_values=secret_values, custom_patterns=spec.redaction_patterns or ())
     recorder = RunRecorder(
         run_id=run_id,
         store_writer=writer,
@@ -503,7 +643,17 @@ async def execute_run(
         render_cb=render_cb,
         clock=clock,
     )
-    hooks = RecordingHooks(recorder=recorder, step_id=MAIN_STEP_ID, attempt_no=1)
+    hooks: RecordingHooks
+    if spec.policy is not None:
+        hooks = PolicyHooks(
+            recorder=recorder,
+            policy=spec.policy,
+            logger=spec.logger,
+            step_id=MAIN_STEP_ID,
+            attempt_no=1,
+        )
+    else:
+        hooks = RecordingHooks(recorder=recorder, step_id=MAIN_STEP_ID, attempt_no=1)
 
     recorder.emit(
         event_type="run_started",
@@ -514,14 +664,38 @@ async def execute_run(
             "capture_profile": spec.capture_profile.value,
         },
     )
-    recorder.emit(
-        event_type="policy_resolved",
-        payload={
-            "policy_name": DEFAULT_DENY_POLICY_NAME,
-            "rule_id": DEFAULT_DENY_RULE_ID,
-            "enforcement": "advisory",
-        },
+    _mlog(
+        spec.logger,
+        "run_started",
+        run_id=run_id,
+        agent=spec.agent_name,
+        kind=RunKind.AGENT.value,
+        target=spec.agent_name,
     )
+    if spec.config_fingerprint is not None:
+        recorder.emit(
+            event_type="config_resolved",
+            payload={"fingerprint": spec.config_fingerprint},
+        )
+    if spec.policy is not None:
+        recorder.emit(
+            event_type="policy_resolved",
+            payload={
+                "policy_name": policy_provenance.policy_name,
+                "ceiling_source": policy_provenance.ceiling_source,
+                "rule_count": len(policy_provenance.rules),
+                "enforcement": policy_provenance.enforcement,
+            },
+        )
+    else:
+        recorder.emit(
+            event_type="policy_resolved",
+            payload={
+                "policy_name": DEFAULT_DENY_POLICY_NAME,
+                "rule_id": DEFAULT_DENY_RULE_ID,
+                "enforcement": "advisory",
+            },
+        )
     recorder.emit(
         event_type="step_started",
         step_id=MAIN_STEP_ID,
@@ -576,6 +750,15 @@ async def execute_run(
         session_id=outcome.session_id,
         payload={"status": outcome.status.value, "duration_ms": attempt.duration_ms},
     )
+    _mlog(
+        spec.logger,
+        "step_finished",
+        run_id=run_id,
+        step_id=MAIN_STEP_ID,
+        agent=spec.agent_name,
+        status=outcome.status.value,
+        duration_ms=attempt.duration_ms,
+    )
     recorder.emit(event_type="run_finished", payload={"status": result.status.value})
     await recorder.finalize()
 
@@ -588,9 +771,23 @@ async def execute_run(
         usage.provider = spec.provider
     result.usage = usage
     if spec.provider:
-        result.egress = [EgressRecord(step_id=MAIN_STEP_ID, provider=spec.provider)]
+        result.egress = [
+            EgressRecord(
+                step_id=MAIN_STEP_ID,
+                provider=spec.provider,
+                acknowledged_by=spec.egress_acknowledged_by,
+            )
+        ]
     result.ended_at = utc_now_iso()
     result.duration_ms = clock.elapsed_ms()
+    _mlog(
+        spec.logger,
+        "run_finished",
+        run_id=run_id,
+        agent=spec.agent_name,
+        status=result.status.value,
+        duration_ms=result.duration_ms,
+    )
 
     for perr in recorder.persistence_errors:
         result.errors.append(perr.to_model())
@@ -600,4 +797,21 @@ async def execute_run(
             _persist(result, writer, index_db)
         finally:
             writer.finalize()
+        if result.persisted:
+            _mlog(
+                spec.logger,
+                "run_persisted",
+                run_id=run_id,
+                agent=spec.agent_name,
+                path_ref=result.result_path,
+            )
+        else:
+            _mlog(
+                spec.logger,
+                "run_persist_failed",
+                run_id=run_id,
+                agent=spec.agent_name,
+                level="warning",
+                reason_code="PersistenceError",
+            )
     return result
