@@ -88,7 +88,7 @@ from ziggy.workflows.scheduler import (
     step_edges,
     topo_order,
 )
-from ziggy.workflows.schema import load_workflow
+from ziggy.workflows.schema import load_workflow_bytes
 from ziggy.workflows.vars import check_secret_allowances
 
 if TYPE_CHECKING:
@@ -194,7 +194,10 @@ def _reverify_trusted_workflow(
                 continue
             if resolved_path == entry.path:
                 try:
-                    workflow = load_workflow(entry.path)
+                    # Parse the EXACT bytes we just hashed — never re-open the
+                    # file (a second read could load content that changed after
+                    # the hash matched: trusted-workflow TOCTOU).
+                    workflow = load_workflow_bytes(content, entry.path)
                 except ValidationError as exc:
                     raise TrustPolicyError(
                         f"trusted workflow {entry.name!r} failed to re-load at "

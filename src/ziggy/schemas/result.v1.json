@@ -1,0 +1,1203 @@
+{
+  "$defs": {
+    "AgentInfo": {
+      "additionalProperties": false,
+      "description": "Handshake-derived identity/capability snapshot for one step's agent.",
+      "properties": {
+        "agent_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Name"
+        },
+        "agent_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Title"
+        },
+        "agent_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Version"
+        },
+        "auth_methods": {
+          "default": [],
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Auth Methods",
+          "type": "array"
+        },
+        "capabilities": {
+          "additionalProperties": true,
+          "default": {},
+          "title": "Capabilities",
+          "type": "object"
+        },
+        "direct_tools_assumed": {
+          "default": true,
+          "title": "Direct Tools Assumed",
+          "type": "boolean"
+        },
+        "mediation": {
+          "default": "advisory",
+          "title": "Mediation",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "protocol_version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Protocol Version"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "AgentInfo",
+      "type": "object"
+    },
+    "Attempt": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_no": {
+          "title": "Attempt No",
+          "type": "integer"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        },
+        "ended_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ended At"
+        },
+        "errors": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/TypedError"
+          },
+          "title": "Errors",
+          "type": "array"
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exit Code"
+        },
+        "started_at": {
+          "title": "Started At",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/StepStatus"
+        },
+        "stop_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stop Reason"
+        }
+      },
+      "required": [
+        "attempt_no",
+        "status",
+        "started_at"
+      ],
+      "title": "Attempt",
+      "type": "object"
+    },
+    "CaptureProfile": {
+      "enum": [
+        "metadata",
+        "standard",
+        "debug"
+      ],
+      "title": "CaptureProfile",
+      "type": "string"
+    },
+    "CaptureStatus": {
+      "enum": [
+        "complete",
+        "partial",
+        "derived",
+        "unavailable"
+      ],
+      "title": "CaptureStatus",
+      "type": "string"
+    },
+    "CaptureSummaryEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "byte_count": {
+          "default": 0,
+          "title": "Byte Count",
+          "type": "integer"
+        },
+        "event_count": {
+          "default": 0,
+          "title": "Event Count",
+          "type": "integer"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/CaptureStatus"
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "status",
+        "source"
+      ],
+      "title": "CaptureSummaryEntry",
+      "type": "object"
+    },
+    "EgressRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "acknowledged_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Acknowledged By"
+        },
+        "input_sources": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Input Sources",
+          "type": "array"
+        },
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        },
+        "step_id": {
+          "title": "Step Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "step_id",
+        "provider"
+      ],
+      "title": "EgressRecord",
+      "type": "object"
+    },
+    "EnforcementScope": {
+      "enum": [
+        "acp_mediated",
+        "agent_reported",
+        "os_enforced"
+      ],
+      "title": "EnforcementScope",
+      "type": "string"
+    },
+    "FileChange": {
+      "additionalProperties": false,
+      "properties": {
+        "attribution": {
+          "default": "unknown",
+          "title": "Attribution",
+          "type": "string"
+        },
+        "binary": {
+          "default": false,
+          "title": "Binary",
+          "type": "boolean"
+        },
+        "capture_method": {
+          "title": "Capture Method",
+          "type": "string"
+        },
+        "capture_status": {
+          "$ref": "#/$defs/CaptureStatus",
+          "default": "derived"
+        },
+        "change_type": {
+          "title": "Change Type",
+          "type": "string"
+        },
+        "patch_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Patch Ref"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "change_type",
+        "capture_method"
+      ],
+      "title": "FileChange",
+      "type": "object"
+    },
+    "InlineAgentWorkflowPlan": {
+      "additionalProperties": false,
+      "properties": {
+        "plan_type": {
+          "const": "inline_agent_workflow",
+          "title": "Plan Type",
+          "type": "string"
+        },
+        "rationale": {
+          "maxLength": 2000,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/InlineStep"
+          },
+          "minItems": 1,
+          "title": "Steps",
+          "type": "array"
+        }
+      },
+      "required": [
+        "plan_type",
+        "rationale",
+        "steps"
+      ],
+      "title": "InlineAgentWorkflowPlan",
+      "type": "object"
+    },
+    "InlineStep": {
+      "additionalProperties": false,
+      "description": "Exactly {id, agent, prompt, inputs, depends_on} \u2014 nothing else parses.",
+      "properties": {
+        "agent": {
+          "title": "Agent",
+          "type": "string"
+        },
+        "depends_on": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "id": {
+          "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Inputs",
+          "type": "object"
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "agent",
+        "prompt"
+      ],
+      "title": "InlineStep",
+      "type": "object"
+    },
+    "NamedWorkflowPlan": {
+      "additionalProperties": false,
+      "properties": {
+        "plan_type": {
+          "const": "named_workflow",
+          "title": "Plan Type",
+          "type": "string"
+        },
+        "rationale": {
+          "maxLength": 2000,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "variables": {
+          "additionalProperties": true,
+          "default": {},
+          "title": "Variables",
+          "type": "object"
+        },
+        "workflow_name": {
+          "title": "Workflow Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_type",
+        "rationale",
+        "workflow_name"
+      ],
+      "title": "NamedWorkflowPlan",
+      "type": "object"
+    },
+    "PermissionDecision": {
+      "additionalProperties": false,
+      "properties": {
+        "client_response": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Client Response"
+        },
+        "decision": {
+          "$ref": "#/$defs/PermissionDecisionKind"
+        },
+        "enforcement_scope": {
+          "$ref": "#/$defs/EnforcementScope",
+          "default": "acp_mediated"
+        },
+        "options_offered": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Options Offered",
+          "type": "array"
+        },
+        "policy_name": {
+          "title": "Policy Name",
+          "type": "string"
+        },
+        "policy_source": {
+          "title": "Policy Source",
+          "type": "string"
+        },
+        "request_summary": {
+          "title": "Request Summary",
+          "type": "string"
+        },
+        "rule_id": {
+          "title": "Rule Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_summary",
+        "decision",
+        "rule_id",
+        "policy_name",
+        "policy_source",
+        "ts"
+      ],
+      "title": "PermissionDecision",
+      "type": "object"
+    },
+    "PermissionDecisionKind": {
+      "enum": [
+        "approved",
+        "denied"
+      ],
+      "title": "PermissionDecisionKind",
+      "type": "string"
+    },
+    "PlanValidation": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_count": {
+          "maximum": 2,
+          "minimum": 1,
+          "title": "Attempt Count",
+          "type": "integer"
+        },
+        "errors": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Errors",
+          "type": "array"
+        },
+        "repair_requested": {
+          "default": false,
+          "title": "Repair Requested",
+          "type": "boolean"
+        },
+        "valid": {
+          "title": "Valid",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "attempt_count",
+        "valid"
+      ],
+      "title": "PlanValidation",
+      "type": "object"
+    },
+    "PolicyProvenance": {
+      "additionalProperties": false,
+      "description": "Effective mediation policy: ceiling, applied rules, sources, scope.",
+      "properties": {
+        "ceiling_source": {
+          "title": "Ceiling Source",
+          "type": "string"
+        },
+        "enforcement": {
+          "default": "advisory",
+          "title": "Enforcement",
+          "type": "string"
+        },
+        "enforcement_scope_default": {
+          "$ref": "#/$defs/EnforcementScope",
+          "default": "acp_mediated"
+        },
+        "policy_name": {
+          "title": "Policy Name",
+          "type": "string"
+        },
+        "rules": {
+          "default": [],
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Rules",
+          "type": "array"
+        },
+        "tightened_by": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Tightened By",
+          "type": "array"
+        }
+      },
+      "required": [
+        "policy_name",
+        "ceiling_source"
+      ],
+      "title": "PolicyProvenance",
+      "type": "object"
+    },
+    "RedactionSummary": {
+      "additionalProperties": false,
+      "description": "Aggregate pattern application counts for a run (never matched text).",
+      "properties": {
+        "by_kind": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "default": {},
+          "title": "By Kind",
+          "type": "object"
+        },
+        "total_redactions": {
+          "default": 0,
+          "title": "Total Redactions",
+          "type": "integer"
+        },
+        "warnings": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "title": "RedactionSummary",
+      "type": "object"
+    },
+    "RunKind": {
+      "enum": [
+        "agent",
+        "workflow",
+        "orchestrator"
+      ],
+      "title": "RunKind",
+      "type": "string"
+    },
+    "RunStatus": {
+      "enum": [
+        "success",
+        "failed",
+        "partial",
+        "cancelled",
+        "abandoned"
+      ],
+      "title": "RunStatus",
+      "type": "string"
+    },
+    "SingleAgentPlan": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "title": "Agent",
+          "type": "string"
+        },
+        "plan_type": {
+          "const": "single_agent",
+          "title": "Plan Type",
+          "type": "string"
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "rationale": {
+          "maxLength": 2000,
+          "title": "Rationale",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_type",
+        "rationale",
+        "agent",
+        "prompt"
+      ],
+      "title": "SingleAgentPlan",
+      "type": "object"
+    },
+    "StepResult": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent"
+        },
+        "agent_info": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentInfo"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "attempts": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Attempt"
+          },
+          "title": "Attempts",
+          "type": "array"
+        },
+        "errors": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/TypedError"
+          },
+          "title": "Errors",
+          "type": "array"
+        },
+        "file_changes": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/FileChange"
+          },
+          "title": "File Changes",
+          "type": "array"
+        },
+        "input_sources": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Input Sources",
+          "type": "object"
+        },
+        "inputs_resolved": {
+          "additionalProperties": true,
+          "default": {},
+          "title": "Inputs Resolved",
+          "type": "object"
+        },
+        "outputs": {
+          "additionalProperties": true,
+          "default": {},
+          "title": "Outputs",
+          "type": "object"
+        },
+        "permission_decisions": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PermissionDecision"
+          },
+          "title": "Permission Decisions",
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/$defs/StepStatus"
+        },
+        "step_id": {
+          "title": "Step Id",
+          "type": "string"
+        },
+        "step_type": {
+          "$ref": "#/$defs/StepType",
+          "default": "agent"
+        },
+        "tool_calls": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ToolCallRecord"
+          },
+          "title": "Tool Calls",
+          "type": "array"
+        }
+      },
+      "required": [
+        "step_id",
+        "status"
+      ],
+      "title": "StepResult",
+      "type": "object"
+    },
+    "StepStatus": {
+      "enum": [
+        "success",
+        "failed",
+        "blocked",
+        "skipped",
+        "cancelled",
+        "abandoned"
+      ],
+      "title": "StepStatus",
+      "type": "string"
+    },
+    "StepType": {
+      "enum": [
+        "agent"
+      ],
+      "title": "StepType",
+      "type": "string"
+    },
+    "ToolCallRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "capture_status": {
+          "$ref": "#/$defs/CaptureStatus",
+          "default": "complete"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kind"
+        },
+        "locations": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Locations",
+          "type": "array"
+        },
+        "protocol_payload_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Protocol Payload Ref"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "tool_call_id": {
+          "title": "Tool Call Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_call_id"
+      ],
+      "title": "ToolCallRecord",
+      "type": "object"
+    },
+    "TypedError": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "details": {
+          "additionalProperties": true,
+          "default": {},
+          "title": "Details",
+          "type": "object"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "TypedError",
+      "type": "object"
+    },
+    "UsageSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "capture_status": {
+          "default": "unavailable",
+          "title": "Capture Status",
+          "type": "string"
+        },
+        "ceiling_enforceable": {
+          "default": false,
+          "title": "Ceiling Enforceable",
+          "type": "boolean"
+        },
+        "cost": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cost"
+        },
+        "currency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Currency"
+        },
+        "input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Tokens"
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Tokens"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider"
+        },
+        "units": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Units"
+        }
+      },
+      "title": "UsageSummary",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "capture": {
+      "additionalProperties": {
+        "$ref": "#/$defs/CaptureSummaryEntry"
+      },
+      "default": {},
+      "title": "Capture",
+      "type": "object"
+    },
+    "capture_profile": {
+      "$ref": "#/$defs/CaptureProfile",
+      "default": "standard"
+    },
+    "config_fingerprint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Config Fingerprint"
+    },
+    "duration_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Duration Ms"
+    },
+    "egress": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/EgressRecord"
+      },
+      "title": "Egress",
+      "type": "array"
+    },
+    "ended_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ended At"
+    },
+    "errors": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/TypedError"
+      },
+      "title": "Errors",
+      "type": "array"
+    },
+    "events_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Events Path"
+    },
+    "kind": {
+      "$ref": "#/$defs/RunKind"
+    },
+    "persisted": {
+      "default": true,
+      "title": "Persisted",
+      "type": "boolean"
+    },
+    "plan": {
+      "anyOf": [
+        {
+          "discriminator": {
+            "mapping": {
+              "inline_agent_workflow": "#/$defs/InlineAgentWorkflowPlan",
+              "named_workflow": "#/$defs/NamedWorkflowPlan",
+              "single_agent": "#/$defs/SingleAgentPlan"
+            },
+            "propertyName": "plan_type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/SingleAgentPlan"
+            },
+            {
+              "$ref": "#/$defs/NamedWorkflowPlan"
+            },
+            {
+              "$ref": "#/$defs/InlineAgentWorkflowPlan"
+            }
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Plan"
+    },
+    "plan_validation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PlanValidation"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "policy": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PolicyProvenance"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "redaction": {
+      "$ref": "#/$defs/RedactionSummary",
+      "default": {
+        "by_kind": {},
+        "total_redactions": 0,
+        "warnings": []
+      }
+    },
+    "result_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Result Path"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "started_at": {
+      "title": "Started At",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/RunStatus"
+    },
+    "steps": {
+      "additionalProperties": {
+        "$ref": "#/$defs/StepResult"
+      },
+      "title": "Steps",
+      "type": "object"
+    },
+    "target": {
+      "title": "Target",
+      "type": "string"
+    },
+    "usage": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/UsageSummary"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "workspace": {
+      "title": "Workspace",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "kind",
+    "target",
+    "status",
+    "started_at",
+    "workspace",
+    "steps"
+  ],
+  "title": "RunResult",
+  "type": "object"
+}

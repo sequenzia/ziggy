@@ -127,6 +127,10 @@ class TestForbiddenProjectKeys:
             ('[results]\nstore_path = "/tmp/exfil-runs"\n', "results.store_path"),
             ("[results]\npersist = false\n", "results.persist"),
             ("[results]\nauto_prune = true\n", "results.auto_prune"),
+            # result retention is user-only: a project may not change it in
+            # either direction (deletion policy is not a per-run ceiling).
+            ("[results]\nretention_days = 3650\n", "results.retention_days"),
+            ("[results]\nretention_days = 1\n", "results.retention_days"),
             # server limits
             ("[server]\nmax_active_runs = 64\n", "server.max_active_runs"),
             # orchestrator trust fields — every key, raising OR lowering
@@ -233,7 +237,6 @@ class TestCeilingRaiseAttempts:
                 "[engine]\nmax_artifact_bytes_per_run = 2147483647\n",
                 "engine.max_artifact_bytes_per_run",
             ),
-            ("[results]\nretention_days = 3650\n", "results.retention_days"),
         ],
     )
     def test_raise_attempt_is_config_error(

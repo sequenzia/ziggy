@@ -37,11 +37,32 @@ def load_workflow(path: Path | str) -> WorkflowDef:
     Raises :class:`ValidationError` (exit 2) with ``workflow <path>: <key
     path>: <message>`` precision for every violation; never raises raw
     pydantic/yaml errors.
+
+    This is READ + delegate: :func:`load_workflow_bytes` owns the parse body so
+    a caller that must hash the file first can parse the EXACT bytes it hashed
+    (no second, unverified re-open — the trusted-workflow TOCTOU guard).
     """
     file = Path(path)
     try:
-        text = file.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
+        content = file.read_bytes()
+    except OSError as exc:
+        raise ValidationError(f"workflow {file}: unreadable: {exc}") from exc
+    return load_workflow_bytes(content, file)
+
+
+def load_workflow_bytes(content: bytes, display_path: Path | str) -> WorkflowDef:
+    """Load and fully validate a workflow definition from ALREADY-READ bytes.
+
+    ``display_path`` supplies the filename identity (the ``name`` must match its
+    stem) and error provenance. Parsing the caller-supplied bytes — rather than
+    re-opening ``display_path`` — is what lets a trusted-workflow re-verification
+    hash and execute the very same bytes (see
+    ``ziggy.orchestrator.execute._reverify_trusted_workflow``).
+    """
+    file = Path(display_path)
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
         raise ValidationError(f"workflow {file}: unreadable: {exc}") from exc
 
     try:

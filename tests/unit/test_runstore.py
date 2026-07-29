@@ -12,7 +12,7 @@ import pytest
 from ziggy.errors import PersistenceError
 from ziggy.ids import new_run_id
 from ziggy.store import RunStore, ziggy_home
-from ziggy.store.runstore import RESULT_FILENAME, WRITER_SENTINEL
+from ziggy.store.runstore import RESULT_FILENAME, WRITER_SENTINEL, process_start_marker
 
 
 def mode_of(path: Path) -> int:
@@ -89,6 +89,10 @@ class TestSingleWriter:
         assert data["pid"] == os.getpid()
         assert data["run_id"] == run_id
         assert data["started_at"].endswith("Z")
+        # Process start marker distinguishes this incarnation from a reused pid,
+        # so abandoned-run recovery is not blocked forever by pid reuse.
+        assert data["process_start"] == process_start_marker(os.getpid())
+        assert data["process_start"]
         writer.finalize()
 
     def test_second_writer_rejected(self, store: RunStore) -> None:

@@ -66,7 +66,12 @@ _TIGHTEN_MIN_PATHS: frozenset[str] = frozenset(
         "engine.default_workflow_timeout_seconds",
         "engine.max_event_bytes_per_step",
         "engine.max_artifact_bytes_per_run",
-        "results.retention_days",
+        # NOTE: results.retention_days is deliberately NOT here. It is a
+        # deletion window, not a security ceiling: letting an untrusted project
+        # config "tighten" it to a smaller value would destroy audit evidence
+        # sooner ('ziggy runs prune' would delete history the user meant to
+        # keep). The fail-closed default below keeps it USER_ONLY, so project
+        # scope is rejected outright rather than silently lowering it.
     }
 )
 _CAPTURE_PATH = "results.capture"

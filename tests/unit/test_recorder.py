@@ -199,6 +199,67 @@ class TestByteCeilings:
         assert summary["transcript"].status is CaptureStatus.PARTIAL
         assert summary["transcript"].truncated is True
 
+    def test_oversized_payload_not_scanned_by_redactor(self) -> None:
+        """FIX #19a: an oversized single payload is reduced to truncation
+        metadata WITHOUT first regex-walking its megabytes; the redactor is
+        never handed the oversized body."""
+
+        class SpyRedactor(Redactor):
+            def __init__(self) -> None:
+                super().__init__()
+                self.scanned_sizes: list[int] = []
+
+            def redact_payload(self, payload: dict) -> tuple[dict, dict[str, int]]:
+                self.scanned_sizes.append(len(json.dumps(payload, default=str)))
+                return super().redact_payload(payload)
+
+        spy = SpyRedactor()
+        rec = make_recorder(redactor=spy, limits=EventLimits(max_payload_bytes_per_event=1000))
+        env = rec.emit(event_type="message_chunk", step_id="main", payload=chunk("z" * 500_000))
+        assert env is not None
+        assert env.payload["truncated"] is True
+        assert env.payload["original_bytes"] > 500_000
+        # the redactor never walked the oversized payload
+        assert spy.scanned_sizes == []
+        # a normal-sized event afterwards still gets scanned, and only that
+        assert rec.emit(event_type="message_chunk", step_id="main", payload=chunk("hi")) is not None
+        assert spy.scanned_sizes and max(spy.scanned_sizes) < 1000
+
+    def test_post_truncation_writes_are_bounded(self, store: RunStore) -> None:
+        """FIX #22: once a step is truncated, per-event lines stop being
+        persisted after a small budget so a runaway step cannot grow
+        events.jsonl without bound; the suppressed total is carried on
+        step_finished."""
+        from ziggy.events.pipeline import _MAX_TRUNCATED_CONTINUATION_LINES
+
+        writer = store.open_run(new_run_id())
+        rec = make_recorder(writer=writer, limits=EventLimits(max_event_bytes_per_step=2000))
+        big = "x" * 1500
+        # cross the ceiling (2nd event triggers the single truncation event)
+        rec.emit(event_type="message_chunk", step_id="main", payload=chunk(big))
+        rec.emit(event_type="message_chunk", step_id="main", payload=chunk(big))
+
+        emitted_after = 500
+        suppressed_returns = 0
+        for _ in range(emitted_after):
+            env = rec.emit(event_type="message_chunk", step_id="main", payload=chunk(big))
+            if env is None:
+                suppressed_returns += 1
+        assert suppressed_returns == emitted_after - _MAX_TRUNCATED_CONTINUATION_LINES
+
+        finished = rec.emit(event_type="step_finished", step_id="main", payload={"status": "ok"})
+        assert finished is not None
+        assert finished.payload["suppressed_events"] == suppressed_returns
+        assert finished.payload["suppressed_bytes"] > 0
+
+        persisted = read_events(writer)
+        # first complete + one truncation + crossing event + budget + step_finished
+        assert len(persisted) <= _MAX_TRUNCATED_CONTINUATION_LINES + 4
+        assert len(persisted) < emitted_after  # nowhere near what was emitted
+        assert sum(1 for e in persisted if e["event_type"] == "truncation") == 1
+        # persisted byte total reflects only what actually hit disk
+        assert rec.event_count == len(persisted)
+
 
 class TestCaptureProfiles:
     def test_standard_reduces_thought_chunks_only(self) -> None:
@@ -239,6 +300,67 @@ class TestCaptureProfiles:
         assert rec.text_output("main") == ""
         assert [c.path for c in rec.file_changes("main")] == ["notes.md"]
         assert [t.tool_call_id for t in rec.tool_calls("main")] == ["t1"]
+
+    def test_metadata_profile_reduces_permission_and_terminal_content(
+        self, store: RunStore
+    ) -> None:
+        """FIX #9: under the metadata profile the full wire tool_call embedded
+        in permission_requested and the full terminal command must NOT reach
+        disk; only id/kind/title/status survive, content becomes {bytes,type}."""
+        writer = store.open_run(new_run_id())
+        rec = make_recorder(writer=writer, profile=CaptureProfile.METADATA)
+        # A distinctive proprietary string that is NOT a redaction pattern, so
+        # only the metadata reduction (not the redactor) can remove it.
+        proprietary = "PROPRIETARY_CODE_MARKER_9137"
+
+        perm = rec.emit(
+            event_type="permission_requested",
+            step_id="main",
+            payload={
+                "request_summary": "write src/secret.py",
+                "tool_call": {
+                    "tool_call_id": "call-1",
+                    "kind": "edit",
+                    "title": "Edit src/secret.py",
+                    "status": "pending",
+                    "raw_input": {"path": "src/secret.py", "content": proprietary},
+                    "content": [{"type": "text", "text": proprietary}],
+                },
+                "options": [{"option_id": "o1", "name": "Allow", "kind": "allow_once"}],
+            },
+        )
+        assert perm is not None
+        tc = perm.payload["tool_call"]
+        # identity preserved for auditability, whole tool_call NOT dropped
+        assert tc["tool_call_id"] == "call-1"
+        assert tc["kind"] == "edit"
+        assert tc["title"] == "Edit src/secret.py"
+        assert tc["status"] == "pending"
+        # content-bearing sub-keys reduced to metadata
+        assert set(tc["raw_input"]) == {"bytes", "type"}
+        assert set(tc["content"]) == {"bytes", "type"}
+        assert proprietary not in json.dumps(perm.payload)
+        assert perm.capture_status is CaptureStatus.PARTIAL
+
+        term = rec.emit(
+            event_type="terminal_op",
+            step_id="main",
+            payload={
+                "op": "create",
+                "decision": "unsupported",
+                "command": f"deploy --token {proprietary}",
+            },
+        )
+        assert term is not None
+        assert term.payload["op"] == "create"
+        assert set(term.payload["command"]) == {"bytes", "type"}
+        assert proprietary not in json.dumps(term.payload)
+        assert term.capture_status is CaptureStatus.PARTIAL
+
+        # nothing proprietary reached the canonical record on disk
+        writer.flush()
+        raw = writer.events_path.read_text(encoding="utf-8")
+        assert proprietary not in raw
 
     def test_debug_keeps_thoughts_and_raw_frames(self, store: RunStore) -> None:
         writer = store.open_run(new_run_id())
@@ -379,28 +501,57 @@ class TestAggregations:
         assert rec.text_output("other") == "elsewhere"
         assert rec.text_output("missing") == ""
 
-    def test_usage_aggregation(self) -> None:
+    def test_usage_aggregation_uses_real_hook_vocabulary(self) -> None:
+        """FIX #17: consume the REAL usage payload engine/hooks.py emits
+        ({used, size, cost, currency}), capture the counts, and never claim a
+        completeness the ACP context gauge cannot support."""
         rec = make_recorder()
         assert rec.usage_summary() is None
+        # ``used`` is a current-state context gauge: latest wins WITHIN a step.
         rec.emit(
             event_type="usage",
             step_id="main",
-            payload={"provider": "anthropic", "units": "tokens", "input_tokens": 10},
+            payload={"used": 10, "size": 200000, "raw": {}},
         )
         rec.emit(
             event_type="usage",
             step_id="main",
-            payload={"input_tokens": 25, "output_tokens": 40, "cost": 0.5, "currency": "USD"},
+            payload={"used": 25, "size": 200000, "cost": 0.5, "currency": "USD", "raw": {}},
         )
         usage = rec.usage_summary()
         assert usage is not None
-        assert usage.provider == "anthropic"
+        # counts are actually captured (the old key mismatch discarded them).
         assert usage.input_tokens == 25
-        assert usage.output_tokens == 40
+        assert usage.output_tokens is None  # ACP never decomposes input/output
+        assert usage.units == "context_tokens"
         assert usage.cost == 0.5
         assert usage.currency == "USD"
-        assert usage.capture_status == "complete"
+        assert usage.provider is None
+        # honest status: a mapping was needed, so 'derived' -- never 'complete'.
+        assert usage.capture_status == "derived"
         assert usage.ceiling_enforceable is False
+
+    def test_usage_multi_step_not_silently_overwritten(self) -> None:
+        """FIX #17: a second step's usage must not overwrite the first;
+        per-step counts are summed, not clobbered run-wide."""
+        rec = make_recorder()
+        rec.emit(event_type="usage", step_id="a", payload={"used": 30, "size": 100, "raw": {}})
+        rec.emit(event_type="usage", step_id="b", payload={"used": 12, "size": 100, "raw": {}})
+        usage = rec.usage_summary()
+        assert usage is not None
+        assert usage.input_tokens == 42  # 30 + 12, not 12 (last-wins) nor 30
+        assert usage.capture_status == "derived"
+
+    def test_usage_status_partial_when_tokens_absent(self) -> None:
+        """FIX #17: a usage event with no token count is 'partial', not 'complete'."""
+        rec = make_recorder()
+        rec.emit(event_type="usage", step_id="main", payload={"cost": 0.25, "currency": "USD"})
+        usage = rec.usage_summary()
+        assert usage is not None
+        assert usage.input_tokens is None
+        assert usage.units is None
+        assert usage.cost == 0.25
+        assert usage.capture_status == "partial"
 
 
 class TestPersistence:
@@ -535,5 +686,8 @@ class TestCaptureSummaryHonesty:
         assert summary["transcript"].source == "metadata_profile"
         assert summary["tool_calls"].status is CaptureStatus.PARTIAL
         assert summary["tool_calls"].source == "metadata_profile"
-        assert summary["permissions"].status is CaptureStatus.COMPLETE
+        # FIX #9: metadata profile reduces the tool_call inside
+        # permission_requested, so permissions is honestly partial too.
+        assert summary["permissions"].status is CaptureStatus.PARTIAL
+        assert summary["permissions"].source == "metadata_profile"
         assert summary["file_changes"].status is CaptureStatus.DERIVED

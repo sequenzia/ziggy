@@ -1,0 +1,137 @@
+{
+  "$defs": {
+    "CaptureStatus": {
+      "enum": [
+        "complete",
+        "partial",
+        "derived",
+        "unavailable"
+      ],
+      "title": "CaptureStatus",
+      "type": "string"
+    },
+    "RedactionMark": {
+      "additionalProperties": false,
+      "description": "Per-event redaction metadata: counts only, never matched text.",
+      "properties": {
+        "applied": {
+          "default": false,
+          "title": "Applied",
+          "type": "boolean"
+        },
+        "counts": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "default": {},
+          "title": "Counts",
+          "type": "object"
+        }
+      },
+      "title": "RedactionMark",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "attempt_no": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Attempt No"
+    },
+    "capture_status": {
+      "$ref": "#/$defs/CaptureStatus",
+      "default": "complete"
+    },
+    "event_type": {
+      "title": "Event Type",
+      "type": "string"
+    },
+    "monotonic_offset_ms": {
+      "title": "Monotonic Offset Ms",
+      "type": "integer"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "default": {},
+      "title": "Payload",
+      "type": "object"
+    },
+    "protocol_payload_ref": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Protocol Payload Ref"
+    },
+    "redaction": {
+      "$ref": "#/$defs/RedactionMark",
+      "default": {
+        "applied": false,
+        "counts": {}
+      }
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "seq": {
+      "title": "Seq",
+      "type": "integer"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "step_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Step Id"
+    },
+    "ts": {
+      "title": "Ts",
+      "type": "string"
+    }
+  },
+  "required": [
+    "seq",
+    "ts",
+    "monotonic_offset_ms",
+    "run_id",
+    "event_type"
+  ],
+  "title": "EventEnvelope",
+  "type": "object"
+}

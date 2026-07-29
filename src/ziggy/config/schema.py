@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from ziggy.models.common import CaptureProfile
 
@@ -70,7 +70,12 @@ class PermissionsConfig(_Section):
 class ResultsConfig(_Section):
     persist: bool = True
     capture: CaptureProfile = CaptureProfile.STANDARD
-    retention_days: int = 30
+    #: USER_ONLY. Deletion policy is not a security ceiling a project may
+    #: "tighten": a smaller retention window destroys audit evidence sooner, so
+    #: project scope may not touch it at all (loader rejects it). ``ge=1``
+    #: forbids a zero/negative window that would make every completed run
+    #: eligible for deletion immediately.
+    retention_days: int = Field(default=30, ge=1)
     auto_prune: bool = False
     store_path: str | None = None  # USER_ONLY
 

@@ -62,8 +62,14 @@ def cli_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Pat
     return home, workspace
 
 
-def seed_manifest(home: Path, *, days_old: int, status: str = "success") -> str:
-    """Write a minimal durable manifest so prune/list have a completed run."""
+def seed_manifest(
+    home: Path, *, days_old: int, status: str = "success", workspace: str | None = None
+) -> str:
+    """Write a minimal durable manifest so prune/list have a completed run.
+
+    ``workspace`` defaults to the current working directory (the invocation
+    workspace), so a default-scoped ``runs prune`` treats the seeded run as its
+    own. Pass an explicit value to simulate a run from another workspace."""
     run_id = new_run_id()
     run_dir = home / "runs" / run_id
     run_dir.mkdir(parents=True)
@@ -77,7 +83,7 @@ def seed_manifest(home: Path, *, days_old: int, status: str = "success") -> str:
         "started_at": ts,
         "ended_at": ts,
         "duration_ms": 5,
-        "workspace": "ws",
+        "workspace": workspace if workspace is not None else str(Path.cwd()),
     }
     (run_dir / "result.json").write_text(json.dumps(manifest), encoding="utf-8")
     return run_id
@@ -274,6 +280,41 @@ def test_runs_prune_older_than_override(cli_home: tuple[Path, Path]) -> None:
     assert result.exit_code == 0, result.stderr
     assert recent_id in result.stdout
     assert not (home / "runs" / recent_id).exists()
+
+
+def test_runs_prune_scoped_to_workspace_by_default(
+    cli_home: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """FIX #12: the store is GLOBAL, so a default prune touches only runs from
+    the invocation workspace. A run recorded from another workspace survives —
+    it would otherwise silently destroy that workspace's audit history."""
+    home, workspace = cli_home
+    mine = seed_manifest(home, days_old=40)  # workspace == cwd
+    other = seed_manifest(home, days_old=40, workspace=str(tmp_path / "other-ws"))
+
+    dry = runner.invoke(app, ["runs", "prune", "--dry-run"])
+    assert dry.exit_code == 0, dry.stderr
+    assert f"scope: workspace {os.path.realpath(workspace)}" in dry.stdout
+    assert mine in dry.stdout
+    assert other not in dry.stdout  # different workspace: out of scope
+
+    pruned = runner.invoke(app, ["runs", "prune", "--yes"])
+    assert pruned.exit_code == 0, pruned.stderr
+    assert not (home / "runs" / mine).exists()
+    assert (home / "runs" / other).is_dir()  # the other workspace is untouched
+
+
+def test_runs_prune_all_workspaces_flag(cli_home: tuple[Path, Path], tmp_path: Path) -> None:
+    """--all-workspaces opts in to pruning across every workspace in the store."""
+    home, _workspace = cli_home
+    mine = seed_manifest(home, days_old=40)
+    other = seed_manifest(home, days_old=40, workspace=str(tmp_path / "other-ws"))
+
+    result = runner.invoke(app, ["runs", "prune", "--all-workspaces", "--yes"])
+    assert result.exit_code == 0, result.stderr
+    assert "scope: all workspaces" in result.stdout
+    assert not (home / "runs" / mine).exists()
+    assert not (home / "runs" / other).exists()
 
 
 # ------------------------------------------------------------------ config

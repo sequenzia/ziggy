@@ -3,8 +3,9 @@
 One mutating Ziggy run per canonical workspace. The lease is a JSON file named
 ``leases/<sha256(canonical workspace)>.json`` inside the store root — outside
 the repository, so project content cannot forge or disable it. Acquisition is
-an ``O_EXCL`` create (0600). An existing lease is only replaced when the owner
-is *provably* dead: ``ESRCH`` on the recorded pid AND on the recorded process
+an ``O_EXCL`` create (0600). An existing lease is only removed and recreated
+(again via ``O_EXCL``) when the owner is *provably* dead: ``ESRCH`` on the
+recorded pid AND on the recorded process
 group (a pgid of 1 or lower skips the group probe). Everything ambiguous —
 ``EPERM`` liveness probes, a live pid whose start marker no longer matches, an
 unreadable or corrupt lease file — stays busy rather than risking concurrent
@@ -32,7 +33,7 @@ from typing import TYPE_CHECKING, Literal
 from ziggy.errors import PersistenceError, WorkspaceBusyError
 from ziggy.ids import utc_now_iso
 from ziggy.models import WorkspaceLease
-from ziggy.store.runstore import FILE_MODE, atomic_write_bytes
+from ziggy.store.runstore import FILE_MODE
 
 if TYPE_CHECKING:
     from ziggy.store import RunStore
@@ -40,9 +41,16 @@ if TYPE_CHECKING:
 __all__ = ["AcquiredLease", "LeaseManager", "canonical_workspace_hash", "lease_path"]
 
 #: Serializes lease acquisition within this process so two threads recovering
-#: the same stale lease cannot both win. Cross-process races are handled by the
-#: O_EXCL create and the post-replace read-back verification.
+#: the same stale lease cannot both win. Cross-process races are arbitrated by
+#: the O_EXCL create: recovery removes a provably-stale file only while it is
+#: byte-identical to the content proven dead, then re-creates via O_EXCL so
+#: exactly one contender wins.
 _ACQUIRE_LOCK = threading.Lock()
+
+#: Upper bound on create<->recover retries before a churning lease file (another
+#: process repeatedly recovering/recreating) is reported busy-ambiguous instead
+#: of looping forever.
+_MAX_RECOVERY_ATTEMPTS = 8
 
 _PS_TIMEOUT_SECONDS = 5.0
 
@@ -196,27 +204,47 @@ class LeaseManager:
                 acquired_at=utc_now_iso(),
             )
             payload = ours.model_dump_json(indent=2).encode("utf-8")
-            try:
-                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, FILE_MODE)
-            except FileExistsError:
-                return self._contend(path=path, ours=ours, payload=payload, canonical=canonical)
-            except OSError as exc:
-                raise PersistenceError(
-                    f"cannot create workspace lease: {exc}", details={"path": str(path)}
-                ) from exc
-            try:
-                os.fchmod(fd, FILE_MODE)
-                os.write(fd, payload)
-                os.fsync(fd)
-            finally:
-                os.close(fd)
-            return AcquiredLease(lease=ours, path=path)
+            # Create-or-recover loop: the O_EXCL create is the single arbiter of
+            # ownership. When a lease file already exists we prove it live (busy)
+            # or provably stale (remove it byte-identically and retry the create).
+            for _ in range(_MAX_RECOVERY_ATTEMPTS):
+                acquired = self._try_create(path=path, ours=ours, payload=payload)
+                if acquired is not None:
+                    return acquired
+                self._contend(path=path, canonical=canonical)
+            # Recovery kept racing another process; refuse rather than loop.
+            raise self._busy(holder=None, canonical=canonical, reason="ambiguous")
 
-    def _contend(
-        self, *, path: Path, ours: WorkspaceLease, payload: bytes, canonical: str
-    ) -> AcquiredLease:
-        """An existing lease file was found: verify liveness, recover, or fail busy."""
-        holder = self._read_holder(path, canonical)
+    def _try_create(
+        self, *, path: Path, ours: WorkspaceLease, payload: bytes
+    ) -> AcquiredLease | None:
+        """Attempt the ``O_EXCL`` create; ``None`` when a lease file already exists."""
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, FILE_MODE)
+        except FileExistsError:
+            return None
+        except OSError as exc:
+            raise PersistenceError(
+                f"cannot create workspace lease: {exc}", details={"path": str(path)}
+            ) from exc
+        try:
+            os.fchmod(fd, FILE_MODE)
+            os.write(fd, payload)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        return AcquiredLease(lease=ours, path=path)
+
+    def _contend(self, *, path: Path, canonical: str) -> None:
+        """An existing lease file was found: verify liveness, recover, or fail busy.
+
+        Returns (signalling the caller to retry its ``O_EXCL`` create) only after
+        a provably-stale lease was removed, or observed to have changed under us;
+        raises ``WorkspaceBusyError`` when the holder is live or ownership cannot
+        be proven stale.
+        """
+        raw = self._read_raw(path, canonical)
+        holder = self._parse_holder(raw, canonical)
         liveness = _pid_liveness(holder.owner_pid)
         if liveness == "alive":
             recorded = holder.owner_process_start
@@ -230,12 +258,12 @@ class LeaseManager:
         # pid is ESRCH-dead; recovery further requires the recorded group gone
         if not _pgid_provably_dead(holder.owner_process_group):
             raise self._busy(holder=holder, canonical=canonical, reason="ambiguous")
-        return self._replace_stale(path=path, ours=ours, payload=payload, canonical=canonical)
+        self._recover_stale(path=path, stale_raw=raw, canonical=canonical)
 
-    def _read_holder(self, path: Path, canonical: str) -> WorkspaceLease:
-        """Parse the current lease file; unreadable or corrupt content is ambiguous."""
+    def _read_raw(self, path: Path, canonical: str) -> bytes:
+        """Read the raw lease bytes; unreadable or vanished content is ambiguous."""
         try:
-            raw = path.read_bytes()
+            return path.read_bytes()
         except FileNotFoundError:
             # Holder vanished between O_EXCL failure and this read (e.g. a
             # concurrent release). Conservative: report busy-ambiguous rather
@@ -243,36 +271,41 @@ class LeaseManager:
             raise self._busy(holder=None, canonical=canonical, reason="ambiguous") from None
         except OSError:
             raise self._busy(holder=None, canonical=canonical, reason="ambiguous") from None
+
+    def _parse_holder(self, raw: bytes, canonical: str) -> WorkspaceLease:
+        """Parse lease bytes; corrupt or wrong-shape content is ambiguous."""
         try:
             return WorkspaceLease.model_validate_json(raw)
         except ValueError:
             raise self._busy(holder=None, canonical=canonical, reason="ambiguous") from None
 
-    def _replace_stale(
-        self, *, path: Path, ours: WorkspaceLease, payload: bytes, canonical: str
-    ) -> AcquiredLease:
-        """Atomically replace a provably-stale lease, then re-read to confirm.
+    def _recover_stale(self, *, path: Path, stale_raw: bytes, canonical: str) -> None:
+        """Remove a provably-stale lease so the retry loop's ``O_EXCL`` create wins.
 
-        Guards the race where two processes recover simultaneously: after the
-        ``os.replace`` the file is read back, and if it no longer carries our
-        run_id another recoverer won — we must report busy, not proceed.
+        This is the race-safe replacement for a last-writer-wins ``os.replace``:
+        the file is re-read and unlinked *only while it is still byte-identical*
+        to the content proven dead during liveness probing. A file that changed
+        under us — a competitor that already recovered and installed its own live
+        lease, or any other write — is left untouched; the caller simply retries
+        the create and re-reads the new holder (busying if it is now live). It
+        never returns an ``AcquiredLease`` directly: the subsequent ``O_EXCL``
+        create is the sole arbiter, so exactly one contender can win.
         """
-        atomic_write_bytes(path.parent, path.name, payload)
         try:
-            data = json.loads(path.read_bytes())
-        except (OSError, ValueError):
+            current = path.read_bytes()
+        except FileNotFoundError:
+            return  # already removed by a concurrent recoverer: retry the create
+        except OSError:
             raise self._busy(holder=None, canonical=canonical, reason="ambiguous") from None
-        if not isinstance(data, dict) or data.get("run_id") != ours.run_id:
-            winner: WorkspaceLease | None = None
-            if isinstance(data, dict):
-                with contextlib.suppress(ValueError):
-                    winner = WorkspaceLease.model_validate(data)
-            raise self._busy(
-                holder=winner,
-                canonical=canonical,
-                reason="held" if winner is not None else "ambiguous",
-            )
-        return AcquiredLease(lease=ours, path=path)
+        if current != stale_raw:
+            return  # changed under us: retry and re-read the new holder
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return  # a concurrent recoverer beat us to the unlink: retry
+        except OSError:
+            raise self._busy(holder=None, canonical=canonical, reason="ambiguous") from None
+        # stale file removed; loop retries the O_EXCL create to claim ownership
 
     @staticmethod
     def _busy(

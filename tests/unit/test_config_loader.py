@@ -39,7 +39,10 @@ def project_file(workspace: Path) -> Path:
 class TestMergeRuleTable:
     def test_rule_classes(self) -> None:
         assert merge_rule_for("engine.max_prompt_bytes") is MergeRule.TIGHTEN_MIN
-        assert merge_rule_for("results.retention_days") is MergeRule.TIGHTEN_MIN
+        # results.retention_days is a deletion window, NOT a security ceiling:
+        # an untrusted project may not lower it (that destroys audit evidence
+        # sooner), so it stays USER_ONLY like every other unlisted field.
+        assert merge_rule_for("results.retention_days") is MergeRule.USER_ONLY
         assert merge_rule_for("results.capture") is MergeRule.TIGHTEN_CAPTURE
         assert merge_rule_for("permissions.project_denials") is MergeRule.PROJECT_DENIALS
         assert merge_rule_for("workflows.default_name") is MergeRule.PROJECT_OK
@@ -208,6 +211,9 @@ class TestUserOnlyRejection:
             "[results]\npersist = false\n",
             '[results]\nstore_path = "/tmp/x"\n',
             "[results]\nauto_prune = true\n",
+            # Deletion window: a project may NOT lower it (would shrink the
+            # audit-retention window and delete history sooner). USER_ONLY.
+            "[results]\nretention_days = 1\n",
             "[engine]\ncancel_grace_seconds = 1.0\n",
             "[logs]\nretention_days = 1\n",
             '[redaction]\nextra_value_env_vars = ["X"]\n',
@@ -220,6 +226,30 @@ class TestUserOnlyRejection:
         write(project_file(workspace), "schema_version = 1\n" + body)
         with pytest.raises(ConfigError, match="forbidden in project scope"):
             load_config(workspace, user_path=user_file, env={})
+
+    def test_project_retention_days_rejected_as_user_only(
+        self, user_file: Path, workspace: Path
+    ) -> None:
+        """FIX #12: even LOWERING retention_days from project scope is rejected
+        (it is not a security ceiling; a smaller window destroys audit evidence
+        sooner). The user value is untouched."""
+        write(user_file, "schema_version = 1\n[results]\nretention_days = 30\n")
+        write(project_file(workspace), "schema_version = 1\n[results]\nretention_days = 1\n")
+        with pytest.raises(ConfigError) as exc:
+            load_config(workspace, user_path=user_file, env={})
+        message = str(exc.value)
+        assert "results.retention_days" in message
+        assert "forbidden in project scope" in message
+        # A raise attempt is likewise rejected as USER_ONLY (never a ceiling).
+        write(project_file(workspace), "schema_version = 1\n[results]\nretention_days = 3650\n")
+        with pytest.raises(ConfigError, match=r"results\.retention_days"):
+            load_config(workspace, user_path=user_file, env={})
+
+    def test_retention_days_must_be_at_least_one(self, user_file: Path) -> None:
+        """FIX #12: ``ge=1`` forbids a zero/negative retention window."""
+        write(user_file, "schema_version = 1\n[results]\nretention_days = 0\n")
+        with pytest.raises(ConfigError, match=r"results\.retention_days"):
+            load_config(None, user_path=user_file, env={})
 
     def test_unknown_and_forbidden_collected_together(
         self, user_file: Path, workspace: Path
@@ -262,16 +292,18 @@ class TestTightenMin:
         assert "ceiling" in str(exc.value)
 
     def test_multiple_raise_attempts_collected(self, user_file: Path, workspace: Path) -> None:
+        # Two TIGHTEN_MIN ceilings the project tries to RAISE: both violations
+        # are collected into one ConfigError (retention_days is no longer a
+        # ceiling — it is USER_ONLY — so it cannot appear here).
         write(
             project_file(workspace),
-            "schema_version = 1\n[engine]\nmax_workflow_steps = 999\n"
-            "[results]\nretention_days = 999\n",
+            "schema_version = 1\n[engine]\nmax_workflow_steps = 999\nmax_prompt_bytes = 999999\n",
         )
         with pytest.raises(ConfigError) as exc:
             load_config(workspace, user_path=user_file, env={})
         message = str(exc.value)
         assert "engine.max_workflow_steps" in message
-        assert "results.retention_days" in message
+        assert "engine.max_prompt_bytes" in message
 
     def test_tighten_applies_against_env_ceiling(self, user_file: Path, workspace: Path) -> None:
         write(project_file(workspace), "schema_version = 1\n[engine]\nmax_prompt_bytes = 4096\n")

@@ -30,6 +30,7 @@ from ziggy.store.runstore import (
     WRITER_SENTINEL,
     RunStore,
     atomic_write_bytes,
+    process_start_marker,
 )
 
 _BUSY_TIMEOUT_MS = 5000
@@ -85,6 +86,28 @@ def _pid_provably_dead(pid: int) -> bool:
     except OSError:
         return False
     return False
+
+
+def _writer_provably_dead(owner: dict[str, Any]) -> bool:
+    """True when the sentinel's writer is provably gone.
+
+    Provably dead in two ways: the recorded pid no longer exists (``ESRCH``),
+    or the pid *is* alive but belongs to a different process incarnation — the
+    recorded process start marker no longer matches the marker of whatever runs
+    at that pid now (a reused pid). Everything else — a live matching marker, or
+    a marker that is unavailable on either side — is ambiguous and stays False,
+    so a still-running writer or an unverifiable one is never clobbered.
+    """
+    pid = owner["pid"]
+    if _pid_provably_dead(pid):
+        return True
+    recorded = owner.get("process_start")
+    if not isinstance(recorded, str) or not recorded:
+        return False  # no marker recorded: cannot disprove liveness
+    current = process_start_marker(pid)
+    if current is None:
+        return False  # marker unavailable now: ambiguous, leave untouched
+    return current != recorded
 
 
 def _read_sentinel(path: Path) -> dict[str, Any] | None:
@@ -332,12 +355,22 @@ class RunIndex:
         return cursor.rowcount > 0
 
     def reindex(self, store: RunStore) -> int:
-        """Rebuild the runs table from durable manifests in one transaction.
+        """Rebuild the runs table from durable manifests without dropping concurrent runs.
 
         Manifests that are missing, unreadable, or of an unsupported schema are
         excluded entirely (never partially interpreted). Returns rows indexed.
+
+        Safe for concurrent processes: a run whose manifest another process
+        persists *during* the scan window must not be wiped. So this never does
+        a blind ``DELETE FROM runs``. Instead it snapshots the run_ids present
+        before the scan, upserts every scanned manifest, and — under the write
+        lock — deletes only rows that (a) predate the scan (were in the initial
+        snapshot) and (b) were not found on disk. A row inserted concurrently is
+        absent from the pre-scan snapshot, so it is never a deletion candidate.
+        Idempotent: re-running finds the same snapshot/scan and changes nothing.
         """
-        rows: list[IndexRow] = []
+        pre_scan_ids = {str(row[0]) for row in self._run("SELECT run_id FROM runs").fetchall()}
+        scanned: dict[str, IndexRow] = {}
         for run_dir in store.iter_run_dirs():
             try:
                 data = store.read_result(run_dir.name)
@@ -345,12 +378,14 @@ class RunIndex:
                 continue
             row = _row_from_manifest(data, result_path=str(run_dir / RESULT_FILENAME))
             if row is not None:
-                rows.append(row)
+                scanned[row.run_id] = row
+        stale = pre_scan_ids - scanned.keys()
         with self._immediate():
-            self._run("DELETE FROM runs")
-            for row in rows:
+            for row in scanned.values():
                 self.insert_or_replace(row)
-        return len(rows)
+            for run_id in stale:
+                self._run("DELETE FROM runs WHERE run_id = ?", (run_id,))
+        return len(scanned)
 
     def recover_abandoned(self, store: RunStore) -> list[str]:
         """Finalize provably-dead interrupted runs as ``abandoned`` (§6.4).
@@ -358,8 +393,10 @@ class RunIndex:
         A run dir *without* a durable ``result.json`` is recovered only when its
         ``.writer`` sentinel is absent (and the dir is old enough to rule out a
         writer between mkdir and sentinel creation) or names a provably dead
-        pid. Ambiguous liveness — live/unverifiable pid, corrupt sentinel,
-        too-recent dir — leaves the directory untouched. Dirs with durable
+        writer — a pid that no longer exists, or a live pid whose recorded start
+        marker no longer matches (a reused pid). Ambiguous liveness — a live pid
+        with a matching or unverifiable marker, corrupt sentinel, too-recent dir
+        — leaves the directory untouched. Dirs with durable
         manifests are never touched. The synthesized manifest goes through the
         same atomic write path as normal results, and the index row is inserted
         only after the manifest is durable.
@@ -376,7 +413,7 @@ class RunIndex:
                 owner = _read_sentinel(sentinel)
                 if owner is None:
                     continue
-                if not _pid_provably_dead(owner["pid"]):
+                if not _writer_provably_dead(owner):
                     continue
                 try:
                     sentinel.unlink()

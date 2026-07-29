@@ -1,12 +1,21 @@
-"""Unit tests for ziggy.engine.prepare (config + overrides -> RunSpec)."""
+"""Unit tests for ziggy.engine.prepare (config + overrides -> RunSpec).
+
+Also carries the FIX #21 teardown-ordering unit test for
+``ziggy.engine.runner.execute_step`` (a runner internal exercised without a
+real subprocess).
+"""
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from ziggy.acp import HandshakeInfo, StopInfo
 from ziggy.config import ResolvedConfig, load_config
+from ziggy.engine import runner as runner_module
 from ziggy.engine.prepare import (
     ACK_BY_CONFIG,
     ACK_BY_FLAG,
@@ -14,9 +23,12 @@ from ziggy.engine.prepare import (
     RunOverrides,
     prepare_run,
 )
+from ziggy.engine.runner import StepExecutionContext, execute_step
 from ziggy.errors import ConfigError, ResourceLimitError
-from ziggy.models.common import CaptureProfile
+from ziggy.events import RunRecorder
+from ziggy.models.common import CaptureProfile, StepStatus
 from ziggy.policy import GUARDED_POLICY_NAME
+from ziggy.redact import Redactor
 from ziggy.store.logs import MetadataLogger, NullLogger
 
 BASE_ENV = {"HOME": "/h", "PATH": "/p"}
@@ -304,3 +316,105 @@ class TestEgressAcknowledgement:
     def test_no_acknowledgement(self, tmp_path: Path) -> None:
         prepared = prepare(tmp_path, self.PROVIDER_TOML, overrides=RunOverrides(no_save=True))
         assert prepared.spec.egress_acknowledged_by is None
+
+
+# ---------------------------------------------------------------------- FIX #21
+# execute_step must never disarm its finally-teardown before the cancel ladder
+# runs: if the ladder raises/cancels at a pre-signal await, client.shutdown(0.0)
+# (idempotent) must still fire so the agent process group is never leaked.
+
+
+class _FakeClient:
+    """Minimal AgentProcessClient stand-in whose cancel() misbehaves."""
+
+    def __init__(self, cancel_exc: BaseException) -> None:
+        self._cancel_exc = cancel_exc
+        self.shutdown_calls = 0
+        self.pid = 4242
+        self.pgid = 4242
+
+    async def initialize(self) -> HandshakeInfo:
+        return HandshakeInfo(
+            protocol_version=1,
+            agent_name="fake",
+            agent_version="0",
+            agent_title=None,
+            capabilities={},
+            auth_methods=[],
+        )
+
+    async def new_session(self, cwd: str) -> str:
+        return "sess-1"
+
+    async def prompt(self, session_id: str, text: str) -> StopInfo:
+        await asyncio.Event().wait()  # never completes: forces the cancel path
+        return StopInfo(stop_reason="end_turn")  # pragma: no cover
+
+    async def cancel(self, session_id: str) -> None:
+        raise self._cancel_exc
+
+    async def shutdown(self, grace_seconds: float) -> int | None:
+        self.shutdown_calls += 1
+        return 0
+
+
+def _step_ctx(cancel_event: asyncio.Event) -> StepExecutionContext:
+    recorder = RunRecorder(
+        run_id="01J000000000000000000000AA",
+        store_writer=None,
+        redactor=Redactor(),
+        capture_profile=CaptureProfile.STANDARD,
+    )
+    return StepExecutionContext(
+        step_id="main",
+        command="/bin/true",
+        args=[],
+        env={},
+        cwd="/tmp",
+        prompt="go",
+        timeout_seconds=30.0,
+        grace_seconds=0.05,
+        recorder=recorder,
+        session_label="fake",
+        cancel_event=cancel_event,
+    )
+
+
+class TestCancelLadderTeardown:
+    async def test_non_connection_exception_in_cancel_still_shuts_down(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = _FakeClient(RuntimeError("boom"))
+
+        async def fake_launch(**kwargs: Any) -> _FakeClient:
+            return fake
+
+        monkeypatch.setattr(runner_module.AgentProcessClient, "launch", fake_launch)
+        cancel_event = asyncio.Event()
+        cancel_event.set()
+
+        outcome = await execute_step(_step_ctx(cancel_event))
+
+        # The bounded rung-1 notify swallows the exception and the ladder still
+        # reaches teardown; the run ends cancelled and shutdown ran.
+        assert outcome.status is StepStatus.CANCELLED
+        assert fake.shutdown_calls >= 1
+
+    async def test_cancelled_error_in_cancel_still_shuts_down(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = _FakeClient(asyncio.CancelledError())
+
+        async def fake_launch(**kwargs: Any) -> _FakeClient:
+            return fake
+
+        monkeypatch.setattr(runner_module.AgentProcessClient, "launch", fake_launch)
+        cancel_event = asyncio.Event()
+        cancel_event.set()
+
+        # A CancelledError is BaseException, not suppressed by the rung-1 guard,
+        # so it propagates out of the ladder before its internal shutdown — the
+        # finally guard (shutdown_done still False) must fire client.shutdown.
+        with pytest.raises(asyncio.CancelledError):
+            await execute_step(_step_ctx(cancel_event))
+        assert fake.shutdown_calls >= 1, "finally-teardown was disarmed before the ladder"

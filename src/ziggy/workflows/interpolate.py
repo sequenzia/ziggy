@@ -39,21 +39,57 @@ _SUSPECT_RE: re.Pattern[str] = re.compile(r"\{\{|\{%|%\}")
 
 _UNTRUSTED_OPEN = '<<<ziggy:untrusted-input name="{name}" source="{source}">>>'
 _UNTRUSTED_CLOSE = '<<<ziggy:end-untrusted-input name="{name}">>>'
+#: Nonce-carrying variants (used when the caller threads a per-run nonce). The
+#: ``id`` makes the closing marker unguessable by an upstream step, so upstream
+#: output cannot forge a byte-exact close (second-order injection escape).
+_UNTRUSTED_OPEN_ID = '<<<ziggy:untrusted-input id="{nonce}" name="{name}" source="{source}">>>'
+_UNTRUSTED_CLOSE_ID = '<<<ziggy:end-untrusted-input id="{nonce}" name="{name}">>>'
+
+#: Any occurrence of this sigil inside untrusted step output is second-order
+#: injection: it is the only way to forge a Ziggy delimiter. It is neutralized
+#: (rewritten to a visible, structurally-inert token) before wrapping so no
+#: agent-emitted bytes can close the untrusted region or open a fresh one.
+_MARKER_SIGIL = "<<<ziggy:"
+_NEUTRALIZED_SIGIL = "<<<ziggy-neutralized:"
 
 #: Prefix of an input source that refers to another step's output.
 _STEP_SOURCE_PREFIX = "steps."
 _VAR_SOURCE_PREFIX = "vars."
 
 
-def wrap_untrusted(name: str, source: str, value: str) -> str:
-    """Wrap one step-output value in the deterministic untrusted delimiters."""
-    return (
-        _UNTRUSTED_OPEN.format(name=name, source=source)
-        + "\n"
-        + value
-        + "\n"
-        + _UNTRUSTED_CLOSE.format(name=name)
-    )
+def _neutralize_markers(value: str) -> str:
+    """Rewrite every Ziggy delimiter sigil an upstream step emitted.
+
+    The replacement does not itself contain the sigil (``<<<ziggy-`` never
+    matches ``<<<ziggy:``), so one non-overlapping pass fully disarms the value.
+    """
+    return value.replace(_MARKER_SIGIL, _NEUTRALIZED_SIGIL)
+
+
+def wrap_untrusted(name: str, source: str, value: str, *, nonce: str | None = None) -> str:
+    """Wrap one step-output value in the untrusted-input delimiters.
+
+    The value is UNTRUSTED upstream-agent output, so before wrapping every
+    embedded ``<<<ziggy:`` sigil is neutralized: a hostile upstream step can
+    otherwise emit a byte-exact closing marker and smuggle text OUT of the
+    untrusted region (a discoverable-name second-order injection). When the
+    caller threads a per-run ``nonce`` the delimiters additionally carry an
+    unguessable ``id`` and the (already neutralized) value is asserted not to
+    contain it — defense in depth so the boundary is unforgeable even if the
+    sigil scan were ever bypassed.
+    """
+    safe_value = _neutralize_markers(value)
+    if nonce:
+        if nonce in safe_value:
+            raise ValidationError(
+                "untrusted step output collided with the per-run nonce; refusing to wrap"
+            )
+        open_marker = _UNTRUSTED_OPEN_ID.format(nonce=nonce, name=name, source=source)
+        close_marker = _UNTRUSTED_CLOSE_ID.format(nonce=nonce, name=name)
+    else:
+        open_marker = _UNTRUSTED_OPEN.format(name=name, source=source)
+        close_marker = _UNTRUSTED_CLOSE.format(name=name)
+    return open_marker + "\n" + safe_value + "\n" + close_marker
 
 
 def template_references(prompt: str) -> Iterator[tuple[str, str]]:
@@ -177,13 +213,24 @@ def render(prompt: str, vars: Mapping[str, str], inputs: Mapping[str, str]) -> s
     return TOKEN_RE.sub(_substitute, prompt)
 
 
-def render_prompt(step: StepDef, vars: Mapping[str, Any], inputs: Mapping[str, str]) -> str:
+def render_prompt(
+    step: StepDef,
+    vars: Mapping[str, Any],
+    inputs: Mapping[str, str],
+    *,
+    nonce: str | None = None,
+) -> str:
     """Compose one step's final prompt from typed vars and resolved inputs.
 
     ``vars`` holds typed variable values (output of ``validate_variables``);
     ``inputs`` holds raw upstream text keyed by the step's local input names.
     Step-output inputs are wrapped in untrusted delimiters; variable values
     (including inputs whose source is ``vars.<name>``) are inserted verbatim.
+
+    ``nonce`` is an optional per-run unguessable token threaded into the
+    untrusted-input delimiters (see :func:`wrap_untrusted`). Callers that can
+    supply one (the run id is a natural source) SHOULD, so the delimiter is
+    unforgeable by upstream output regardless of the sigil-neutralization pass.
     """
     var_texts = {name: value_to_text(value) for name, value in vars.items()}
     input_texts: dict[str, str] = {}
@@ -198,5 +245,7 @@ def render_prompt(step: StepDef, vars: Mapping[str, Any], inputs: Mapping[str, s
                 raise ValidationError(
                     f"input {local_name!r}: no resolved value for source {source!r}"
                 )
-            input_texts[local_name] = wrap_untrusted(local_name, source, inputs[local_name])
+            input_texts[local_name] = wrap_untrusted(
+                local_name, source, inputs[local_name], nonce=nonce
+            )
     return render(step.prompt, var_texts, input_texts)

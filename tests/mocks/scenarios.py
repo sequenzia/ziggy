@@ -28,6 +28,9 @@ ENV_ECHO = "env_echo"
 ECHO_PROMPT = "echo_prompt"
 SCRIPTED_JSON = "scripted_json"
 PLAN_PROBE = "plan_probe"
+#: Appended scenarios (FIX #10 / FIX #24 regression fixtures).
+WEDGE_STDIN = "wedge_stdin"
+PERMISSION_REFUSAL = "permission_refusal"
 
 ALL_SCENARIOS: tuple[str, ...] = (
     HELLO,
@@ -45,6 +48,8 @@ ALL_SCENARIOS: tuple[str, ...] = (
     ECHO_PROMPT,
     SCRIPTED_JSON,
     PLAN_PROBE,
+    WEDGE_STDIN,
+    PERMISSION_REFUSAL,
 )
 
 #: Scenarios the SDK-backed fixture (sdk_agent.py) supports.
@@ -187,6 +192,26 @@ ECHO_PROMPT_CHUNK_CHARS = 4096
 
 MOCK_PLAN_JSON_ENV = "MOCK_PLAN_JSON"
 MOCK_PLAN_JSON_2_ENV = "MOCK_PLAN_JSON_2"
+
+# --- wedge_stdin (FIX #10) ------------------------------------------------
+# A hostile agent that requests a LARGE mediated read then stops reading its
+# stdin entirely (blocks its own event loop). Ziggy's write of the read
+# response fills the OS pipe, so a bare ``session/cancel`` (rung 1 of the
+# teardown ladder) blocks forever on writer.drain(). The bounded rung-1 notify
+# must give up and proceed to process-group SIGTERM/SIGKILL. The agent spawns a
+# child in its group (announced as the first chunk) so the test can verify the
+# whole group is reaped.
+
+WEDGE_READ_FILE_NAME = "wedge-read.txt"
+
+# --- permission_refusal (FIX #24) -----------------------------------------
+# Requests a permission (which guarded/default-deny policy DENIES), then ends
+# the turn with stop_reason='refusal' — the agent abandoned the turn because
+# Ziggy refused the operation. This must surface as a typed
+# PermissionDeniedError on the step (REQ-008), not a generic ProtocolError.
+
+PERMISSION_REFUSAL_TOOL_CALL_ID = "call-perm-refusal-1"
+PERMISSION_REFUSAL_TOOL_TITLE = "refused operation"
 
 # --- plan_probe -----------------------------------------------------------
 # Planning-isolation probe: emits ONE compact-JSON object describing what the

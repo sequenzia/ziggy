@@ -58,16 +58,32 @@ class _Match:
 
 
 class _RegexMatcher:
-    __slots__ = ("kind", "max_width", "pattern")
+    __slots__ = ("kind", "max_width", "pattern", "tail")
 
-    def __init__(self, kind: str, pattern: re.Pattern[str], max_width: int) -> None:
+    def __init__(
+        self,
+        kind: str,
+        pattern: re.Pattern[str],
+        max_width: int,
+        tail: re.Pattern[str] | None = None,
+    ) -> None:
         self.kind = kind
         self.pattern = pattern
         self.max_width = max_width
+        #: Character class of the token this builtin matches. When a bounded
+        #: match ends on a still-continuing run of these characters (its upper
+        #: quantifier bound was hit greedily), the span is extended to the end
+        #: of that run so no secret tail survives beside the marker.
+        self.tail = tail
 
     def iter_spans(self, text: str) -> Iterator[tuple[int, int]]:
         for match in self.pattern.finditer(text):
             yield match.start(), match.end()
+
+    def extend(self, text: str, end: int) -> int:
+        if self.tail is not None and (run := self.tail.match(text, end)) is not None:
+            return run.end()
+        return end
 
 
 class _ExactMatcher:
@@ -86,6 +102,10 @@ class _ExactMatcher:
             yield idx, idx + len(self.value)
             start = idx + len(self.value)
 
+    def extend(self, text: str, end: int) -> int:
+        # A literal value is never widened: it has no quantifier bound to exceed.
+        return end
+
 
 _Matcher = _RegexMatcher | _ExactMatcher
 
@@ -95,21 +115,48 @@ _Matcher = _RegexMatcher | _ExactMatcher
 _BOUNDARY = r"(?<![A-Za-z0-9])"
 
 
-def _builtin(kind: str, regex: str, max_width: int, flags: int = 0) -> _RegexMatcher:
-    return _RegexMatcher(kind, re.compile(regex, flags), max_width)
+def _builtin(
+    kind: str,
+    regex: str,
+    max_width: int,
+    flags: int = 0,
+    tail: str | None = None,
+) -> _RegexMatcher:
+    """Compile a built-in matcher.
+
+    ``max_width`` bounds the base regex match; ``tail`` (a character-class body
+    such as ``A-Za-z0-9_-``) names the token charset so a match that ends on a
+    still-continuing token run — i.e. its greedy upper bound was hit — is
+    widened to the whole run, guaranteeing no secret tail persists next to the
+    marker even when the raw token is longer than ``max_width``.
+    """
+    tail_pattern = re.compile(f"[{tail}]+") if tail is not None else None
+    return _RegexMatcher(kind, re.compile(regex, flags), max_width, tail_pattern)
 
 
-#: Built-in token formats. Quantifiers are explicitly bounded so no match can
-#: exceed its declared max_width; the streaming carry logic depends on that
-#: invariant. Order matters: more specific prefixes come first (anthropic
-#: before openai-style).
+#: Built-in token formats. Quantifiers are explicitly bounded so no *base*
+#: match can exceed its declared max_width; the streaming carry logic depends
+#: on that invariant, while ``tail`` extension covers over-long real tokens.
+#: Order matters: more specific prefixes come first (anthropic before
+#: openai-style), and that order also decides the label of a merged span.
 BUILTIN_PATTERNS: tuple[_RegexMatcher, ...] = (
-    _builtin("anthropic_api_key", _BOUNDARY + r"sk-ant-[A-Za-z0-9_-]{8,256}", 264),
-    _builtin("openai_api_key", _BOUNDARY + r"sk-[A-Za-z0-9]{20,256}", 260),
+    _builtin(
+        "anthropic_api_key",
+        _BOUNDARY + r"sk-ant-[A-Za-z0-9_-]{8,256}",
+        264,
+        tail=r"A-Za-z0-9_-",
+    ),
+    _builtin(
+        "openai_api_key",
+        _BOUNDARY + r"sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,256}",
+        267,
+        tail=r"A-Za-z0-9_-",
+    ),
     _builtin(
         "github_token",
         _BOUNDARY + r"(?:gh[oprsu]_[A-Za-z0-9]{20,255}|github_pat_[A-Za-z0-9_]{22,255})",
         268,
+        tail=r"A-Za-z0-9_",
     ),
     _builtin("aws_access_key_id", _BOUNDARY + r"AKIA[0-9A-Z]{16}", 20),
     _builtin(
@@ -119,34 +166,56 @@ BUILTIN_PATTERNS: tuple[_RegexMatcher, ...] = (
         96,
         re.IGNORECASE,
     ),
-    _builtin("slack_token", _BOUNDARY + r"xox[abps]-[A-Za-z0-9-]{8,64}", 72),
-    _builtin("google_api_key", _BOUNDARY + r"AIza[0-9A-Za-z_-]{35}", 40),
+    _builtin("slack_token", _BOUNDARY + r"xox[abps]-[A-Za-z0-9-]{8,64}", 72, tail=r"A-Za-z0-9-"),
+    _builtin("google_api_key", _BOUNDARY + r"AIza[0-9A-Za-z_-]{35}", 40, tail=r"0-9A-Za-z_-"),
     _builtin(
         "bearer_token",
         r"authorization[ \t]{0,4}:[ \t]{0,4}bearer[ \t]{1,8}[A-Za-z0-9._~+/-]{4,512}={0,4}",
         560,
         re.IGNORECASE,
+        tail=r"A-Za-z0-9._~+/=-",
     ),
     _builtin("private_key", r"-----BEGIN [A-Z ]{0,48}PRIVATE KEY-----", 80),
 )
 
 
-def _overlaps(claimed: list[tuple[int, int]], start: int, end: int) -> bool:
-    return any(s < end and start < e for s, e in claimed)
-
-
 def _find_matches(text: str, matchers: Sequence[_Matcher]) -> list[_Match]:
-    """Non-overlapping matches across all matchers, earlier matchers winning."""
-    claimed: list[tuple[int, int]] = []
-    found: list[_Match] = []
-    for matcher in matchers:
+    """Redaction spans as the merged union of every matcher's candidate spans.
+
+    Every matcher contributes candidates against the raw text; a bounded
+    builtin whose match ends on a still-continuing token run is widened to the
+    end of that run (see ``_RegexMatcher.extend``). Overlapping candidates are
+    then merged into union intervals rather than the later one being discarded,
+    so a configured secret that is a substring of a longer wire credential can
+    never suppress the builtin covering the rest — adding a configured secret
+    only ever grows coverage. Each merged span is labelled by its most-specific
+    contributor: the earliest matcher in priority order (exact values first,
+    then builtins in table order, then customs).
+    """
+    candidates: list[tuple[int, int, int, str]] = []
+    for priority, matcher in enumerate(matchers):
         for start, end in matcher.iter_spans(text):
-            if end <= start or _overlaps(claimed, start, end):
+            if end <= start:
                 continue
-            claimed.append((start, end))
-            found.append(_Match(start, end, matcher.kind))
-    found.sort(key=lambda m: m.start)
-    return found
+            candidates.append((start, matcher.extend(text, end), priority, matcher.kind))
+    if not candidates:
+        return []
+    # Sort by start, then priority so equal-start spans present their most
+    # specific (lowest-priority-index) label first.
+    candidates.sort(key=lambda c: (c[0], c[2]))
+    merged: list[_Match] = []
+    cur_start, cur_end, cur_prio, cur_kind = candidates[0]
+    for start, end, prio, kind in candidates[1:]:
+        if start < cur_end:  # overlap: union the spans, keep the most-specific label
+            if end > cur_end:
+                cur_end = end
+            if prio < cur_prio:
+                cur_prio, cur_kind = prio, kind
+        else:
+            merged.append(_Match(cur_start, cur_end, cur_kind))
+            cur_start, cur_end, cur_prio, cur_kind = start, end, prio, kind
+    merged.append(_Match(cur_start, cur_end, cur_kind))
+    return merged
 
 
 class Redactor:
@@ -300,20 +369,29 @@ class StreamingRedactor:
         ``feed`` or ``flush`` to finalize.
         """
         self._buf += chunk
-        cut = len(self._buf) - self._window
+        buflen = len(self._buf)
+        cut = buflen - self._window
         if cut <= 0:
             return ""
         parts: list[str] = []
         pos = 0
         counts: dict[str, int] = {}
+        hold_from: int | None = None
         for match in _find_matches(self._buf, self._matchers):
             if match.start >= cut:
+                break
+            if match.end >= buflen:
+                # A ``tail``-extended span reaches the buffer end, so the token
+                # run may continue in a later chunk. Hold from this span's
+                # start (never emit its prefix raw) and finalize it only once a
+                # boundary character proves it complete, or at ``flush``.
+                hold_from = match.start
                 break
             parts.append(self._buf[pos : match.start])
             parts.append(_marker(match.kind))
             counts[match.kind] = counts.get(match.kind, 0) + 1
             pos = match.end
-        final_cut = max(cut, pos)
+        final_cut = hold_from if hold_from is not None else max(cut, pos)
         parts.append(self._buf[pos:final_cut])
         self._buf = self._buf[final_cut:]
         if counts:

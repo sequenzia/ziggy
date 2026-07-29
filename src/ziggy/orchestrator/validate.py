@@ -94,6 +94,24 @@ _FENCE_RE = re.compile(r"```[ \t]*(?:json)?[ \t]*\r?\n(.*?)```", re.IGNORECASE |
 #: private suspect pattern (a lone ``}}`` is legitimate literal text).
 _SUSPECT_RE = re.compile(r"\{\{|\{%|%\}")
 
+#: Planner-chosen MAPPING KEYS (named_workflow ``variables`` keys, inline
+#: ``inputs`` keys) are unbounded in the plan schema, so a key can carry up to
+#: ~200 chars of attacker-chosen text (e.g. a forged untrusted-input marker).
+#: A key is safe to echo into a persisted error ONLY when it matches the same
+#: identifier shape the plan schema enforces on step ids; anything else is
+#: reported context-free (never echoed), per the 'never echo raw planner
+#: response' contract.
+_SAFE_KEY_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]{0,63}$")
+
+#: A pydantic ``loc`` segment is safe to render only when it is made purely of
+#: identifier characters (schema field names, list indices). A segment carrying
+#: any other character — the only way a forged marker sigil (``<<<ziggy:``, with
+#: ``<``/``:``/quotes/spaces) could appear — is a planner-chosen extra-field or
+#: mapping name and is dropped. Length is NOT bounded here: an over-long but
+#: identifier-only key can never embed a marker, and ``bound_errors`` already
+#: truncates the rendered entry.
+_SAFE_LOC_RE = re.compile(r"^[A-Za-z0-9_]+$")
+
 _VARIANT_TAGS = frozenset({"single_agent", "named_workflow", "inline_agent_workflow"})
 
 #: Exact allowed model_dump keys per variant — defense in depth against future
@@ -222,6 +240,10 @@ def _render_parse_error(error: Mapping[str, Any]) -> str:
     loc = [str(part) for part in error.get("loc", ())]
     if loc and loc[0] in _VARIANT_TAGS:
         loc = loc[1:]
+    # Drop any planner-chosen loc segment (an ``extra_forbidden`` field name or
+    # a hostile mapping key) — those can carry arbitrary attacker text into the
+    # persisted error. Only schema field names / list indices survive.
+    loc = [part for part in loc if _SAFE_LOC_RE.match(part)]
     error_type = str(error.get("type", "unknown"))
     phrase = _PARSE_PHRASES.get(error_type, f"invalid value ({error_type})")
     if loc:
@@ -404,10 +426,17 @@ def _validate_plan_variables(workflow: WorkflowDef, values: Mapping[str, Any]) -
     with exact-typed JSON values instead of CLI string parsing.
     """
     errors: list[str] = []
-    errors.extend(
-        f"variables.{name}: unknown variable (not declared by the workflow)"
-        for name in sorted(set(values) - set(workflow.variables))
-    )
+    unknown = sorted(set(values) - set(workflow.variables))
+    malformed = 0
+    for name in unknown:
+        if _SAFE_KEY_RE.match(name):
+            errors.append(f"variables.{name}: unknown variable (not declared by the workflow)")
+        else:
+            malformed += 1
+    if malformed:
+        # Never echo the raw key (it may be a forged marker or other attacker
+        # text); report positionally instead.
+        errors.append(f"variables: {malformed} provided variable name(s) are not valid identifiers")
     for name, decl in workflow.variables.items():
         if name in values:
             value = values[name]
@@ -550,14 +579,23 @@ def _validate_inline(
         )
         errors.extend(template_errors)
 
+        # Input NAMES are planner-chosen and unbounded in the plan schema;
+        # constrain them to the step-id identifier shape so no name can smuggle
+        # attacker text into a persisted error. Malformed names are reported
+        # positionally (never echoed).
+        if any(not _SAFE_KEY_RE.match(name) for name in step.inputs):
+            errors.append(
+                f"steps.{index}.inputs: one or more input names are not valid identifiers"
+            )
         for name, source in step.inputs.items():
             if source == "goal":
                 continue
             parts = source.split(".")
             shape_ok = len(parts) == 4 and parts[0] == "steps" and parts[2] == "outputs"
             if not shape_ok or parts[3] != "text":
+                label = name if _SAFE_KEY_RE.match(name) else "<input>"
                 errors.append(
-                    f"steps.{index}.inputs.{name}: only 'goal' or "
+                    f"steps.{index}.inputs.{label}: only 'goal' or "
                     "'steps.<id>.outputs.text' sources are allowed"
                 )
 

@@ -45,7 +45,7 @@ from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ziggy.acp import AgentProcessClient, HandshakeInfo, StopInfo
 from ziggy.engine.hooks import (
@@ -59,9 +59,11 @@ from ziggy.engine.hooks import (
 from ziggy.errors import (
     AgentLaunchError,
     CancelledError,
+    PermissionDeniedError,
     PersistenceError,
     ProtocolError,
     StepTimeoutError,
+    WorkspaceBusyError,
     ZiggyError,
 )
 from ziggy.events import DEFAULT_LIMITS, EventLimits, RunRecorder
@@ -70,6 +72,7 @@ from ziggy.models.common import (
     CaptureProfile,
     CaptureStatus,
     EnforcementScope,
+    PermissionDecisionKind,
     RunKind,
     RunStatus,
     StepStatus,
@@ -87,7 +90,32 @@ from ziggy.policy import MediationPolicy, build_policy_provenance
 from ziggy.redact import CustomPattern, Redactor
 from ziggy.store import IndexRow, RunDirWriter, RunIndex, RunStore
 
+if TYPE_CHECKING:
+    from ziggy.engine.lease import AcquiredLease, LeaseManager
+
+
+def _new_lease_manager() -> LeaseManager:
+    """Lazily build the default per-run :class:`LeaseManager`.
+
+    Imported inside the factory (not at module top) so importing
+    ``ziggy.engine.runner`` never eagerly builds the lease/``WorkspaceLease``
+    module graph — keeping this module's import side-effect-free and its import
+    order stable. ``LeaseManager`` is stateless, so a fresh default per run is
+    equivalent to a shared one."""
+    from ziggy.engine.lease import LeaseManager
+
+    return LeaseManager()
+
+
 MAIN_STEP_ID = "main"
+
+#: Upper bound (seconds) on teardown-ladder rung 1 — the best-effort ACP
+#: ``session/cancel`` notify. The SDK sender future resolves only after
+#: ``writer.drain()``; an agent that stopped reading its stdin would block that
+#: drain forever, so rung 1 is time-boxed and the ladder ALWAYS proceeds to the
+#: process-group TERM/KILL that actually guarantees teardown (FIX: unbounded
+#: rung 1 made a wedged agent unkillable).
+CANCEL_NOTIFY_TIMEOUT = 2.0
 
 RenderCallback = Callable[[EventEnvelope], None]
 
@@ -157,6 +185,10 @@ class RunSpec:
     logger: MetadataLoggerLike | None = None
     config_fingerprint: str | None = None
     egress_acknowledged_by: str | None = None
+    #: Cross-process workspace lease manager (SPEC REQ-010/012 §6.4). Direct
+    #: runs acquire the single-mutator lease before ANY agent launch, exactly
+    #: like ``execute_workflow``; the manager is stateless and safe to share.
+    lease_manager: LeaseManager = field(default_factory=_new_lease_manager)
 
 
 @dataclass(slots=True)
@@ -293,8 +325,15 @@ async def _cancel_ladder(
     grace_seconds: float,
 ) -> tuple[int | None, StopInfo | None]:
     """Teardown ladder steps 1-2 (ACP cancel + grace, still draining events),
-    then hand the rest (group TERM/KILL/reap) to ``client.shutdown``."""
-    await client.cancel(session_id)
+    then hand the rest (group TERM/KILL/reap) to ``client.shutdown``.
+
+    Rung 1 (the ACP ``session/cancel`` notify) is time-boxed and best-effort:
+    a wedged agent that stopped reading stdin would otherwise block the sender
+    drain forever and starve the SIGTERM/SIGKILL rungs. On timeout or any send
+    failure we continue unconditionally — process-group teardown is what
+    actually guarantees the agent dies."""
+    with suppress(Exception, TimeoutError):
+        await asyncio.wait_for(client.cancel(session_id), timeout=CANCEL_NOTIFY_TIMEOUT)
     stop: StopInfo | None = None
     with suppress(TimeoutError, ProtocolError):
         stop = await asyncio.wait_for(asyncio.shield(prompt_task), timeout=max(grace_seconds, 0.0))
@@ -340,9 +379,24 @@ def _stop_outcome(
             session_id=session_id,
             capture_degraded=True,
         )
-    error = ProtocolError(
-        f"turn ended without completing: {reason}", details={"stop_reason": reason}
-    )
+    # A turn that ends in ``refusal`` AFTER the step recorded a policy-denied
+    # permission decision is the guarded-denial path REQ-008 promises surfaces
+    # as a typed ``PermissionDeniedError`` (not a bare ProtocolError): the agent
+    # abandoned the turn because Ziggy refused the operation it needed.
+    denials = [
+        d
+        for d in ctx.recorder.permission_decisions(ctx.step_id)
+        if d.decision is PermissionDecisionKind.DENIED
+    ]
+    if reason == "refusal" and denials:
+        error = PermissionDeniedError(
+            "turn ended in refusal after a policy-denied permission request",
+            details={"rule_id": denials[-1].rule_id, "stop_reason": reason},
+        )
+    else:
+        error = ProtocolError(
+            f"turn ended without completing: {reason}", details={"stop_reason": reason}
+        )
     _emit_error(
         ctx.recorder,
         error,
@@ -581,8 +635,13 @@ async def execute_step(ctx: StepExecutionContext) -> StepOutcome:
             agent=ctx.session_label,
             reason_code=reason,
         )
-        shutdown_done = True  # the ladder owns teardown from here
+        # Do NOT disarm the finally-teardown before the ladder runs: if the
+        # ladder raises or is cancelled at a pre-signal await point, the
+        # ``finally: if not shutdown_done`` guard must still fire
+        # ``client.shutdown(0.0)`` (idempotent) so the process group is never
+        # leaked. Only mark teardown done once the ladder actually returned.
         exit_code, stop = await _cancel_ladder(client, session_id, prompt_task, ctx.grace_seconds)
+        shutdown_done = True
         recorder.emit(
             event_type="terminated",
             step_id=ctx.step_id,
@@ -644,6 +703,11 @@ async def execute_step(ctx: StepExecutionContext) -> StepOutcome:
             capture_degraded=True,
         )
     finally:
+        # Flush the per-step streaming redactors BEFORE the step settles: the
+        # held cross-boundary remainder must reach events.jsonl, the live
+        # renderer, and the recorder's text aggregation (outputs['text']) on
+        # every terminal path — success, crash, timeout, and cancel (FIX #2).
+        hooks.flush_streams()
         if not shutdown_done:
             await client.shutdown(0.0)
 
@@ -782,6 +846,7 @@ async def execute_run(
         steps={MAIN_STEP_ID: step},
     )
 
+    store: RunStore | None = None
     writer: RunDirWriter | None = None
     index_db: Path | None = None
     if not spec.no_save:
@@ -790,6 +855,7 @@ async def execute_run(
             writer = store.open_run(run_id)
             index_db = store.index_db_path
         except PersistenceError as exc:
+            store = None
             result.errors.append(exc.to_model())
 
     # Exact-value seeding (Phase 2) wins; the env-var *name* heuristic remains
@@ -849,79 +915,149 @@ async def execute_run(
                 "enforcement": "advisory",
             },
         )
-    recorder.emit(
-        event_type="step_started",
-        step_id=MAIN_STEP_ID,
-        attempt_no=1,
-        payload={"agent": spec.agent_name},
-    )
+    # Cross-process workspace lease: mirror ``execute_workflow`` — the single
+    # mutator lease is acquired BEFORE any agent launch (direct runs are NOT
+    # assumed read-only from prompt text; SPEC REQ-010/012 §6.4) and released in
+    # a ``finally``. A busy or unprovable lease fails the run with a
+    # ``WorkspaceBusyError`` recorded and NOTHING launched, matching workflow
+    # semantics + the existing exit-code mapping. The lease lives under the
+    # store root, so an unsaved run (no store) keeps the "no-save touches
+    # nothing" guarantee and runs without one.
+    workspace_path = Path(spec.cwd)
+    lease: AcquiredLease | None = None
+    outcome: StepOutcome | None = None
+    try:
+        lease_blocked = False
+        if store is not None:
+            try:
+                lease = spec.lease_manager.acquire(store, workspace_path, run_id)
+            except (WorkspaceBusyError, PersistenceError) as exc:
+                lease_blocked = True
+                recorder.emit(
+                    event_type="error",
+                    payload={
+                        "code": exc.code,
+                        "message": exc.message,
+                        "details": exc.details,
+                    },
+                )
+                result.errors.append(exc.to_model())
+                _mlog(
+                    spec.logger,
+                    "lease_unavailable",
+                    run_id=run_id,
+                    agent=spec.agent_name,
+                    level="warning",
+                    reason_code=exc.code,
+                )
+            except OSError as exc:
+                lease_blocked = True
+                error = PersistenceError(
+                    f"cannot prepare lease directory: {exc}",
+                    details={"error": exc.__class__.__name__},
+                )
+                recorder.emit(
+                    event_type="error",
+                    payload={
+                        "code": error.code,
+                        "message": error.message,
+                        "details": error.details,
+                    },
+                )
+                result.errors.append(error.to_model())
+            else:
+                recorder.emit(
+                    event_type="lease_acquired",
+                    payload={
+                        "workspace": lease.lease.workspace,
+                        "lease_path": str(lease.path),
+                    },
+                )
+                _mlog(spec.logger, "lease_acquired", run_id=run_id, agent=spec.agent_name)
 
-    attempt = Attempt(attempt_no=1, status=StepStatus.FAILED, started_at=utc_now_iso())
-    attempt_start_ms = clock.elapsed_ms()
+        if not lease_blocked:
+            recorder.emit(
+                event_type="step_started",
+                step_id=MAIN_STEP_ID,
+                attempt_no=1,
+                payload={"agent": spec.agent_name},
+            )
 
-    outcome = await execute_step(
-        StepExecutionContext(
-            step_id=MAIN_STEP_ID,
-            command=spec.command,
-            args=list(spec.args),
-            env=spec.env,
-            cwd=spec.cwd,
-            prompt=spec.prompt,
-            timeout_seconds=spec.step_timeout_seconds,
-            grace_seconds=spec.cancel_grace_seconds,
-            recorder=recorder,
-            session_label=spec.agent_name,
-            policy=spec.policy,
-            logger=spec.logger,
-            cancel_event=cancel_event,
-            attempt_no=1,
-            decide_permission=decide_permission,
-        )
-    )
+            attempt = Attempt(attempt_no=1, status=StepStatus.FAILED, started_at=utc_now_iso())
+            attempt_start_ms = clock.elapsed_ms()
 
-    settle_step_result(
-        step=step,
-        attempt=attempt,
-        outcome=outcome,
-        duration_ms=clock.elapsed_ms() - attempt_start_ms,
-        recorder=recorder,
-        redactor=redactor,
-        agent_name=spec.agent_name,
-        provider=spec.provider,
-    )
-    redacted_prompt, _ = redactor.redact_text(spec.prompt)
-    step.inputs_resolved = {"prompt": redacted_prompt}
-    step.input_sources = {"prompt": "direct:prompt"}
-    result.status = _RUN_STATUS_OF_STEP[outcome.status]
+            outcome = await execute_step(
+                StepExecutionContext(
+                    step_id=MAIN_STEP_ID,
+                    command=spec.command,
+                    args=list(spec.args),
+                    env=spec.env,
+                    cwd=spec.cwd,
+                    prompt=spec.prompt,
+                    timeout_seconds=spec.step_timeout_seconds,
+                    grace_seconds=spec.cancel_grace_seconds,
+                    recorder=recorder,
+                    session_label=spec.agent_name,
+                    policy=spec.policy,
+                    logger=spec.logger,
+                    cancel_event=cancel_event,
+                    attempt_no=1,
+                    decide_permission=decide_permission,
+                )
+            )
 
-    recorder.emit(
-        event_type="step_finished",
-        step_id=MAIN_STEP_ID,
-        attempt_no=1,
-        session_id=outcome.session_id,
-        payload={"status": outcome.status.value, "duration_ms": attempt.duration_ms},
-    )
-    _mlog(
-        spec.logger,
-        "step_finished",
-        run_id=run_id,
-        step_id=MAIN_STEP_ID,
-        agent=spec.agent_name,
-        status=outcome.status.value,
-        duration_ms=attempt.duration_ms,
-    )
+            settle_step_result(
+                step=step,
+                attempt=attempt,
+                outcome=outcome,
+                duration_ms=clock.elapsed_ms() - attempt_start_ms,
+                recorder=recorder,
+                redactor=redactor,
+                agent_name=spec.agent_name,
+                provider=spec.provider,
+            )
+            redacted_prompt, _ = redactor.redact_text(spec.prompt)
+            step.inputs_resolved = {"prompt": redacted_prompt}
+            step.input_sources = {"prompt": "direct:prompt"}
+            result.status = _RUN_STATUS_OF_STEP[outcome.status]
+
+            recorder.emit(
+                event_type="step_finished",
+                step_id=MAIN_STEP_ID,
+                attempt_no=1,
+                session_id=outcome.session_id,
+                payload={"status": outcome.status.value, "duration_ms": attempt.duration_ms},
+            )
+            _mlog(
+                spec.logger,
+                "step_finished",
+                run_id=run_id,
+                step_id=MAIN_STEP_ID,
+                agent=spec.agent_name,
+                status=outcome.status.value,
+                duration_ms=attempt.duration_ms,
+            )
+    finally:
+        if lease is not None:
+            lease.release()
+            recorder.emit(
+                event_type="lease_released",
+                payload={"workspace": lease.lease.workspace},
+            )
+            _mlog(spec.logger, "lease_released", run_id=run_id, agent=spec.agent_name)
+
     recorder.emit(event_type="run_finished", payload={"status": result.status.value})
     await recorder.finalize()
 
     result.capture = recorder.capture_summary()
-    if outcome.capture_degraded:
+    if outcome is not None and outcome.capture_degraded:
         degrade_capture(result)
     result.redaction = recorder.redaction_summary()
     usage = recorder.usage_summary()
     if usage is not None and usage.provider is None:
         usage.provider = spec.provider
     result.usage = usage
-    if spec.provider:
+    if outcome is not None and spec.provider:
         result.egress = [
             EgressRecord(
                 step_id=MAIN_STEP_ID,

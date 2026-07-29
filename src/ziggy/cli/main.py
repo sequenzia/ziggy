@@ -67,10 +67,12 @@ agents_app = typer.Typer(help="Registered agents.", no_args_is_help=True)
 runs_app = typer.Typer(help="Browse and maintain persisted runs.", no_args_is_help=True)
 config_app = typer.Typer(help="Inspect and validate configuration.", no_args_is_help=True)
 workflow_app = typer.Typer(help="Run and inspect constrained workflows.", no_args_is_help=True)
+schemas_app = typer.Typer(help="Emit the shipped JSON Schema artifacts.", no_args_is_help=True)
 app.add_typer(agents_app, name="agents")
 app.add_typer(runs_app, name="runs")
 app.add_typer(config_app, name="config")
 app.add_typer(workflow_app, name="workflow")
+app.add_typer(schemas_app, name="schemas")
 
 _SINCE_DAYS_RE = re.compile(r"^(\d+)d$")
 
@@ -629,11 +631,18 @@ def runs_reindex() -> None:
     print(f"indexed {count} run(s)")
 
 
-def _prune_candidates(store: RunStore, cutoff_iso: str) -> list[str]:
+def _prune_candidates(store: RunStore, cutoff_iso: str, *, workspace: str | None) -> list[str]:
     """ULID-named REAL directories under runs/ whose durable manifest ended
     before the cutoff. Symlinks are never followed (lstat check) and never
     deleted; directories without a durable ``result.json`` (in-flight or
-    crashed runs) are never candidates."""
+    crashed runs) are never candidates.
+
+    When ``workspace`` is set, only runs whose manifest workspace resolves to
+    it are candidates — the store is GLOBAL, so an unscoped prune would delete
+    audit evidence from every other workspace. A manifest with no attributable
+    workspace is never pruned in scoped mode (fail-safe: keep what we cannot
+    prove belongs to this invocation). ``workspace`` is ``None`` only for an
+    explicit ``--all-workspaces``."""
     runs_dir = store.root / "runs"
     if not runs_dir.is_dir():
         return []
@@ -652,8 +661,13 @@ def _prune_candidates(store: RunStore, cutoff_iso: str) -> list[str]:
         except PersistenceError:
             continue
         ended = data.get("ended_at") or data.get("started_at")
-        if isinstance(ended, str) and ended and ended < cutoff_iso:
-            candidates.append(entry.name)
+        if not (isinstance(ended, str) and ended and ended < cutoff_iso):
+            continue
+        if workspace is not None:
+            run_ws = data.get("workspace")
+            if not isinstance(run_ws, str) or os.path.realpath(run_ws) != workspace:
+                continue
+        candidates.append(entry.name)
     return candidates
 
 
@@ -686,13 +700,31 @@ def runs_prune(
     yes: Annotated[
         bool, typer.Option("--yes", help="Actually delete (required; headless-safe default).")
     ] = False,
+    all_workspaces: Annotated[
+        bool,
+        typer.Option(
+            "--all-workspaces",
+            help="Prune matching runs from EVERY workspace in the store "
+            "(default: only this workspace).",
+        ),
+    ] = False,
 ) -> None:
-    """Explicitly delete expired run directories (the only deletion mechanism)."""
-    resolved = _load_config(Path.cwd())
+    """Explicitly delete expired run directories (the only deletion mechanism).
+
+    The run store is global, so by default this prunes ONLY runs recorded from
+    the current workspace; pass ``--all-workspaces`` to prune across every
+    workspace. The active scope is always printed before anything is listed."""
+    workspace = Path.cwd()
+    resolved = _load_config(workspace)
     store = _store_for(resolved.config)
     days = older_than if older_than is not None else resolved.config.results.retention_days
     cutoff = (utc_now() - timedelta(days=days)).isoformat().replace("+00:00", "Z")
-    candidates = _prune_candidates(store, cutoff)
+    scope = None if all_workspaces else os.path.realpath(workspace)
+    if scope is None:
+        print("scope: all workspaces")
+    else:
+        print(f"scope: workspace {scope}")
+    candidates = _prune_candidates(store, cutoff, workspace=scope)
     if not candidates:
         print(f"no completed runs older than {days} day(s)")
         return
@@ -820,6 +852,28 @@ def config_validate() -> None:
     """Exit 0 with 'ok', or a path-precise ConfigError with exit 2."""
     _load_config(Path.cwd())
     print("ok")
+
+
+# ------------------------------------------------------------------- schemas
+
+
+@schemas_app.command("dump")
+def schemas_dump(
+    out: Annotated[
+        Path | None,
+        typer.Option("--out", help="Directory to write the schema files into (default: cwd)."),
+    ] = None,
+) -> None:
+    """Write the versioned result.json/events.jsonl JSON Schemas (REQ-005).
+
+    These are the exact artifacts shipped as wheel package data; regenerating
+    them here must byte-match the committed files."""
+    from ziggy.schemas import write_schemas
+
+    out_dir = out if out is not None else Path.cwd()
+    written = write_schemas(out_dir)
+    for path in written:
+        print(str(path))
 
 
 # ------------------------------------------------------------------- doctor

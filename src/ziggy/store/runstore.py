@@ -11,9 +11,11 @@ again (see ``ziggy.store.index`` for abandoned-run recovery).
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import secrets
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, TextIO
@@ -32,6 +34,51 @@ EVENTS_FILENAME = "events.jsonl"
 #: plus, once one exists, the immediately previous version (REQ-005). Anything
 #: else fails explicitly and is never partially interpreted.
 SUPPORTED_RESULT_SCHEMAS = frozenset({RESULT_SCHEMA_VERSION})
+
+_PS_TIMEOUT_SECONDS = 5.0
+
+
+def process_start_marker(pid: int) -> str | None:
+    """Stable, opaque token identifying the *incarnation* of ``pid``.
+
+    Primary source: hash of ``ps -p PID -o lstart=`` output (darwin/linux).
+    Fallback: ``/proc/<pid>/stat`` field 22 (starttime in clock ticks) when a
+    procfs is available. Returns ``None`` when neither source can answer.
+
+    This intentionally duplicates ``ziggy.engine.lease._process_start_marker``:
+    the store layer sits *below* the engine, and importing from ``engine`` here
+    would invert that dependency (and risk an import cycle, since ``lease``
+    already imports from this module). The writer sentinel records this marker
+    so abandoned-run recovery can tell a still-running writer from a reused pid.
+    """
+    if pid <= 0:
+        return None
+    try:
+        proc = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "lstart="],
+            capture_output=True,
+            text=True,
+            timeout=_PS_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        proc = None
+    if proc is not None and proc.returncode == 0:
+        text = proc.stdout.strip()
+        if text:
+            return "ps:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+    # psutil-free procfs fallback (linux): starttime is field 22 of
+    # /proc/<pid>/stat; the comm field may contain spaces, so split after the
+    # closing paren. Fields 3..N follow, making starttime index 19 there.
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="ascii", errors="replace")
+    except OSError:
+        return None
+    _, _, rest = raw.rpartition(")")
+    fields = rest.split()
+    if len(fields) < 20:
+        return None
+    return "proc:" + fields[19]
 
 
 def ziggy_home() -> Path:
@@ -103,8 +150,17 @@ class RunDirWriter:
         self._acquire_sentinel()
 
     def _acquire_sentinel(self) -> None:
+        pid = os.getpid()
         payload = json.dumps(
-            {"pid": os.getpid(), "run_id": self.run_id, "started_at": utc_now_iso()}
+            {
+                "pid": pid,
+                "run_id": self.run_id,
+                "started_at": utc_now_iso(),
+                # Process start marker: distinguishes this writer's incarnation
+                # from a later, unrelated process that reuses this pid, so
+                # recovery does not treat a reused pid as a live writer forever.
+                "process_start": process_start_marker(pid) or "",
+            }
         )
         try:
             fd = os.open(self._sentinel, os.O_WRONLY | os.O_CREAT | os.O_EXCL, FILE_MODE)

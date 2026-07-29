@@ -317,6 +317,49 @@ class TestReindex:
             listed = index.list_runs()
             assert [r.run_id for r in listed] == [run_id]
 
+    def test_keeps_run_persisted_concurrently_during_scan(
+        self, store: RunStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A run committed by another process *during* the manifest scan must
+        survive reindex — it must not be wiped by a blind DELETE-all."""
+        existing = persist_run(store)
+        concurrent_id = new_run_id()
+        real_iter = store.iter_run_dirs
+
+        def racing_iter() -> Any:
+            yield from real_iter()
+            # After the last dir is yielded (scan complete), a concurrent process
+            # persists a new run: manifest on disk AND its index row committed
+            # through a separate connection, before our reindex transaction runs.
+            writer = store.open_run(concurrent_id)
+            manifest = {
+                "schema_version": 1,
+                "run_id": concurrent_id,
+                "kind": "agent",
+                "target": "claude",
+                "status": "success",
+                "started_at": "2026-07-28T11:00:00Z",
+                "ended_at": "2026-07-28T11:01:00Z",
+                "duration_ms": 60000,
+                "workspace": "/tmp/ws",
+            }
+            writer.write_result(json.dumps(manifest))
+            writer.finalize()
+            with RunIndex(store.index_db_path) as other:
+                other.insert_or_replace(
+                    make_row(
+                        concurrent_id,
+                        started_at="2026-07-28T11:00:00Z",
+                        result_path=str(store.run_dir(concurrent_id) / RESULT_FILENAME),
+                    )
+                )
+
+        monkeypatch.setattr(store, "iter_run_dirs", racing_iter)
+        with RunIndex(store.index_db_path) as index:
+            index.reindex(store)
+            assert index.get(concurrent_id) is not None, "concurrent run was wiped by reindex"
+            assert index.get(existing) is not None
+
     def test_skips_unsupported_and_incomplete_manifests(self, store: RunStore) -> None:
         good = persist_run(store)
         persist_run(store, schema_version=99)  # future schema: excluded entirely
@@ -375,6 +418,55 @@ class TestRecoverAbandoned:
             assert not (writer.run_dir / RESULT_FILENAME).exists()
             assert (writer.run_dir / WRITER_SENTINEL).exists()
             assert index.get(run_id) is None
+        writer.finalize()
+
+    def test_live_pid_matching_marker_left_untouched(self, store: RunStore) -> None:
+        run_id = new_run_id()
+        writer = store.open_run(run_id)  # real sentinel: our live pid + real marker
+        data = json.loads((writer.run_dir / WRITER_SENTINEL).read_text())
+        assert data["process_start"], "writer sentinel must record a start marker"
+        with RunIndex(store.index_db_path) as index:
+            assert index.recover_abandoned(store) == []
+            assert not (writer.run_dir / RESULT_FILENAME).exists()
+            assert (writer.run_dir / WRITER_SENTINEL).exists()
+        writer.finalize()
+
+    def test_reused_pid_mismatched_marker_recovered(self, store: RunStore) -> None:
+        """A live pid whose recorded start marker no longer matches is a reused
+        pid: the original writer is provably gone, so the run is finalized."""
+        run_id = new_run_id()
+        writer = store.open_run(run_id)  # sentinel holds OUR live pid
+        writer.append_event('{"seq": 1}')
+        writer.fsync_events()
+        sentinel = writer.run_dir / WRITER_SENTINEL
+        data = json.loads(sentinel.read_text())
+        assert data["pid"] == os.getpid()
+        # Same (live) pid, but a start marker that cannot match this incarnation.
+        data["process_start"] = "ps:not-the-original-incarnation"
+        sentinel.write_text(json.dumps(data))
+        with RunIndex(store.index_db_path) as index:
+            recovered = index.recover_abandoned(store)
+            assert recovered == [run_id]
+            assert not sentinel.exists()
+            manifest = store.read_result(run_id)
+            assert manifest["status"] == "abandoned"
+            row = index.get(run_id)
+            assert row is not None
+            assert row.status == "abandoned"
+
+    def test_live_pid_missing_marker_is_ambiguous(self, store: RunStore) -> None:
+        """A sentinel without a start marker cannot disprove a live pid: left be."""
+        run_id = new_run_id()
+        writer = store.open_run(run_id)
+        sentinel = writer.run_dir / WRITER_SENTINEL
+        # Legacy-shaped sentinel: our live pid, no process_start field.
+        sentinel.write_text(
+            json.dumps({"pid": os.getpid(), "run_id": run_id, "started_at": "2026-07-28T08:00:00Z"})
+        )
+        with RunIndex(store.index_db_path) as index:
+            assert index.recover_abandoned(store) == []
+            assert not (writer.run_dir / RESULT_FILENAME).exists()
+            assert sentinel.exists()
         writer.finalize()
 
     def test_corrupt_sentinel_is_ambiguous(self, store: RunStore) -> None:

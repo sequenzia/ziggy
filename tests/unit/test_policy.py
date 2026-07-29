@@ -495,6 +495,52 @@ class TestProjectDenials:
         )
 
 
+class TestCaseInsensitiveSensitiveDeny:
+    """Deny globs must fold case: on APFS/NTFS a request for '.ENV' opens the
+    real '.env', so a case-sensitive match would leak the secret AND record a
+    false read-in-workspace-allow (REQ-011). Both reads and writes must deny."""
+
+    @pytest.mark.parametrize(
+        "rel",
+        [
+            ".env",
+            ".ENV",
+            ".Env",
+            ".aws/credentials",
+            ".AWS/credentials",
+            ".ssh/id_rsa",
+            ".SSH/ID_RSA",
+            ".ziggy/config.toml",
+            ".ziggy/CONFIG.toml",
+            "secret.PEM",
+            "id_rsa",
+        ],
+    )
+    def test_read_and_write_deny_case_variants(
+        self, policy: MediationPolicy, ws: Path, step: Path, rel: str
+    ) -> None:
+        read = policy.decide_fs_read(str(ws / rel))
+        assert_decision(
+            read, allowed=False, rule_id=RULE_SENSITIVE_PATH_DENY, source=SOURCE_DEFAULT
+        )
+        write = policy.decide_fs_write(str(step / rel))
+        assert_decision(
+            write, allowed=False, rule_id=RULE_SENSITIVE_PATH_DENY, source=SOURCE_DEFAULT
+        )
+
+    def test_user_deny_paths_fold_case(self, ws: Path, step: Path) -> None:
+        # Left non-existent so realpath preserves the requested casing
+        # (a case-preserving FS would otherwise normalize it): the fold must
+        # happen in the glob, not rely on filesystem behavior.
+        policy = MediationPolicy.guarded(
+            workspace=ws, step_dir=step, profile=FakeProfile(deny_paths=["internal/**"])
+        )
+        decision = policy.decide_fs_read(str(ws / "INTERNAL" / "x"))
+        assert_decision(
+            decision, allowed=False, rule_id=RULE_SENSITIVE_PATH_DENY, source=SOURCE_USER
+        )
+
+
 class TestPermissionMapping:
     def test_read_kind_with_inside_location_allows(self, policy: MediationPolicy, ws: Path) -> None:
         req = make_permission(

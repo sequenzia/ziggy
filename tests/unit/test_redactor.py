@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from ziggy.redact import CustomPattern, Redactor
+from ziggy.redact import MIN_EXACT_VALUE_LENGTH, CustomPattern, Redactor
 
 BUILTIN_SAMPLES = [
     ("anthropic_api_key", "sk-ant-api03-" + "A" * 40),
@@ -30,6 +30,81 @@ def test_builtin_kind_redacted(kind: str, secret: str) -> None:
     assert secret not in out
     assert f"[REDACTED:{kind}]" in out
     assert counts.get(kind) == 1
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [
+        "sk-proj-" + "aZ9_-bY8_" * 4,
+        "sk-svcacct-" + "Qw3-tE7_r" * 4,
+        "sk-admin-" + "mK1_nP6-x" * 4,
+        "sk-" + "aZ9_-bY8_" * 4,  # bare modern key with '_' and '-'
+    ],
+)
+def test_modern_openai_key_redacted_fully(secret: str) -> None:
+    """FIX #8: sk-proj-/svcacct-/admin- keys with '_' and '-' redact fully."""
+    redactor = Redactor()
+    out, counts = redactor.redact_text(f"key {secret} end")
+    assert secret not in out
+    assert out == "key [REDACTED:openai_api_key] end"
+    assert counts == {"openai_api_key": 1}
+
+
+def test_long_bearer_jwt_leaves_no_raw_tail() -> None:
+    """FIX #8: a 700-char JWT past the {4,512} bound redacts with no raw tail."""
+    jwt = "aB3-_x." * 100  # 700 chars, all in the bearer token/padding charset
+    assert len(jwt) == 700
+    redactor = Redactor()
+    out, counts = redactor.redact_text(f"Authorization: Bearer {jwt} trailing")
+    assert jwt not in out
+    # No suffix of the token survives beside the marker.
+    assert not any(jwt[i:] in out for i in range(len(jwt) - 20, len(jwt)))
+    assert out == "[REDACTED:bearer_token] trailing"
+    assert counts == {"bearer_token": 1}
+
+
+def test_long_bearer_jwt_redacts_across_stream_chunks() -> None:
+    """FIX #8: an over-window JWT split across chunks still emits no raw tail."""
+    jwt = "aB3-_x." * 100
+    redactor = Redactor()
+    stream = redactor.make_stream()
+    header = f"Authorization: Bearer {jwt}"
+    joined = stream.feed(header[:400]) + stream.feed(header[400:] + " done") + stream.flush()
+    assert jwt not in joined
+    assert joined == "[REDACTED:bearer_token] done"
+    assert redactor.summary().by_kind == {"bearer_token": 1}
+
+
+@pytest.mark.parametrize("slice_bounds", [(0, 20), (8, 28), (33, 53)])
+def test_configured_secret_substring_never_reduces_coverage(
+    slice_bounds: tuple[int, int],
+) -> None:
+    """FIX #13: an exact value that is a prefix/infix/suffix of a longer wire
+    credential must not suppress the builtin covering the rest; adding it never
+    removes a character of coverage."""
+    key = "sk-ant-api03-" + "A" * 40  # anthropic builtin credential, 53 chars
+    lo, hi = slice_bounds
+    part = key[lo:hi]
+    assert len(part) >= MIN_EXACT_VALUE_LENGTH
+    assert 0 <= lo < hi <= len(key)
+
+    baseline = Redactor()
+    out_base, _ = baseline.redact_text(f"x {key} y")
+    assert out_base == "x [REDACTED:anthropic_api_key] y"
+
+    configured = Redactor(secret_values=[("env:PART", part)])
+    out, counts = configured.redact_text(f"x {key} y")
+
+    # The whole credential is gone: no fragment before/after the configured
+    # part leaks, and coverage matches the baseline (only the label differs).
+    assert key not in out
+    assert key[:lo] == "" or key[:lo] not in out
+    assert key[hi:] == "" or key[hi:] not in out
+    assert out == "x [REDACTED:env:PART] y"
+    assert out.replace("[REDACTED:env:PART]", "|") == out_base.replace(
+        "[REDACTED:anthropic_api_key]", "|"
+    )
+    assert counts == {"env:PART": 1}
 
 
 def test_token_prefix_inside_word_not_redacted() -> None:

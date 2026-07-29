@@ -33,6 +33,13 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/ziggy"]
 
+# Ship the versioned JSON Schema artifacts (REQ-005) as wheel package data so
+# `result.json` / `events.jsonl` can be validated against a pinned schema
+# without importing Ziggy. Regenerate with `ziggy schemas dump`.
+[tool.hatch.build.targets.wheel.force-include]
+"src/ziggy/schemas/result.v1.json" = "ziggy/schemas/result.v1.json"
+"src/ziggy/schemas/events.v1.json" = "ziggy/schemas/events.v1.json"
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

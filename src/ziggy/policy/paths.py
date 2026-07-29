@@ -8,8 +8,13 @@ Two independent, pure primitives used by the guarded mediation engine:
     inside the base raises :class:`PathAmbiguity` with a stable ``reason``.
 
 Glob matching (``glob_matches`` / ``is_sensitive``)
-    Deny-glob semantics over paths **relative to the workspace**, defined
-    precisely as follows (case-sensitive, via :func:`fnmatch.fnmatchcase`):
+    Deny-glob semantics over paths **relative to the workspace**. Deny globs
+    match case-insensitively; this can only add denials, never remove them. A
+    deny rule stricter than the underlying (possibly case-insensitive)
+    filesystem is safe — the reverse, where ``.ENV`` slips past a ``.env`` deny
+    yet opens the real ``.env`` on APFS/NTFS, is a secret leak. Every pattern
+    and path segment is folded exactly once via :func:`str.casefold` before
+    matching, and the comparison is otherwise as follows:
 
     1. Patterns and paths are split into POSIX segments; ``.`` segments and a
        leading ``/`` are ignored (patterns are always workspace-relative).
@@ -17,8 +22,8 @@ Glob matching (``glob_matches`` / ``is_sensitive``)
        ``**/.env`` matches both a top-level ``.env`` and ``a/b/.env``, and
        ``**/.aws/**`` matches ``.aws`` itself as well as anything below any
        ``.aws`` directory at any depth.
-    3. Any other pattern segment matches exactly one path segment via
-       ``fnmatchcase`` — ``*`` and ``?`` never cross a ``/``.
+    3. Any other pattern segment matches exactly one (case-folded) path segment
+       via ``fnmatchcase`` — ``*`` and ``?`` never cross a ``/``.
     4. A pattern containing no ``/`` is a *basename* pattern: it matches the
        final path component at any depth (internally ``p`` ≡ ``**/p``).
 
@@ -125,14 +130,18 @@ def resolve_contained(base: Path | str, candidate: Path | str) -> Path:
 
 
 def _path_segments(rel_path: str | PurePath) -> tuple[str, ...]:
+    # Case-fold every segment exactly once so deny globs match case-
+    # insensitively (see module docstring): '.ENV' must be denied like '.env'.
     text = rel_path.as_posix() if isinstance(rel_path, PurePath) else str(rel_path)
-    return tuple(p for p in PurePosixPath(text).parts if p != "/")
+    return tuple(p.casefold() for p in PurePosixPath(text).parts if p != "/")
 
 
 def _pattern_segments(pattern: str) -> tuple[str, ...] | None:
     if not pattern:
         return None
-    parts = tuple(seg for seg in pattern.split("/") if seg not in ("", "."))
+    # Fold each pattern segment once, consistently with _path_segments; the
+    # synthesized '**' marker folds to itself and stays special in _match.
+    parts = tuple(seg.casefold() for seg in pattern.split("/") if seg not in ("", "."))
     if not parts:
         return None
     if "/" not in pattern:
@@ -142,6 +151,8 @@ def _pattern_segments(pattern: str) -> tuple[str, ...] | None:
 
 
 def _match(pattern: tuple[str, ...], segments: tuple[str, ...]) -> bool:
+    # Both pattern and segments are already case-folded by _pattern_segments /
+    # _path_segments, so fnmatchcase here compares fold-to-fold.
     if not pattern:
         return not segments
     head, rest = pattern[0], pattern[1:]

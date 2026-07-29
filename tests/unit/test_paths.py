@@ -195,8 +195,14 @@ class TestGlobMatches:
             ("docs/**", "docs/a.md", True),
             ("docs/**", "docs", True),
             ("docs/**", "src/docs.md", False),
-            # matching is case-sensitive and deterministic across platforms.
-            ("**/*.pem", "certs/server.PEM", False),
+            # matching is case-insensitive (deny globs only widen): '.PEM'
+            # matches '*.pem' so it cannot slip past on a case-folding FS.
+            ("**/*.pem", "certs/server.PEM", True),
+            ("**/*.pem", "certs/SERVER.pem", True),
+            ("**/.env", ".ENV", True),
+            ("**/.env", ".Env", True),
+            ("INTERNAL/**", "internal/x", True),
+            ("internal/**", "INTERNAL/x", True),
             # degenerate patterns match nothing.
             ("", ".env", False),
             ("/", ".env", False),
@@ -243,6 +249,30 @@ class TestIsSensitive:
         assert is_sensitive("notes/private.txt", ["notes/**"])
         # defaults still apply alongside extras
         assert is_sensitive(".env", ["notes/**"])
+
+    @pytest.mark.parametrize(
+        "rel",
+        [
+            ".env",
+            ".ENV",
+            ".Env",
+            ".aws/credentials",
+            ".AWS/credentials",
+            ".ssh/id_rsa",
+            ".SSH/ID_RSA",
+            ".ziggy/config.toml",
+            ".ziggy/CONFIG.toml",
+            "secret.PEM",
+            "id_rsa",
+        ],
+    )
+    def test_case_folded_sensitive_hits(self, rel: str) -> None:
+        # Deny globs match case-insensitively: an uppercased variant that opens
+        # the real secret on APFS/NTFS must still be classified sensitive.
+        assert is_sensitive(rel)
+
+    def test_user_extra_glob_matches_case_insensitively(self) -> None:
+        assert is_sensitive("INTERNAL/x", ["internal/**"])
 
     def test_defaults_are_the_documented_eight(self) -> None:
         assert DEFAULT_SENSITIVE_GLOBS == (

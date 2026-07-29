@@ -304,7 +304,7 @@ class TestStaleRecovery:
         assert busy[0].details["run_id"] == wins[0].lease.run_id
         wins[0].release()
 
-    def test_replace_readback_detects_cross_process_winner(
+    def test_completed_competing_recovery_between_proof_and_create_busies(
         self,
         manager: LeaseManager,
         store: RunStore,
@@ -312,7 +312,15 @@ class TestStaleRecovery:
         dead_child: tuple[int, str, int],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Simulate another process winning between our os.replace and read-back."""
+        """A competitor that finishes recovery between our stale-proof and our
+        create must win: the O_EXCL create is the sole arbiter, so we busy.
+
+        We inject the competitor at the exact seam the old os.replace path could
+        not defend — after we have removed the stale lease but before our own
+        create. The competitor installs its own *live* lease via O_EXCL; our
+        retry create then fails-exists and we report busy-held, never a second
+        AcquiredLease over a live workspace.
+        """
         pid, marker, pgid = dead_child
         target = write_lease(
             store,
@@ -326,23 +334,76 @@ class TestStaleRecovery:
             marker=_process_start_marker(os.getpid()) or "",
             pgid=os.getpgrp(),
         )
-        real_replace = os.replace
-        hijacked = False
+        real_unlink = Path.unlink
+        injected = False
 
-        def racing_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
-            nonlocal hijacked
-            real_replace(src, dst)
-            if Path(dst) == target and not hijacked:
-                hijacked = True
-                target.write_text(competitor.model_dump_json(), encoding="utf-8")
+        def racing_unlink(self: Path, *args: object, **kwargs: object) -> None:
+            nonlocal injected
+            real_unlink(self, *args, **kwargs)  # type: ignore[arg-type]
+            if self == target and not injected:
+                injected = True
+                # Competitor completes its recovery: claims the now-free slot.
+                fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                try:
+                    os.write(fd, competitor.model_dump_json().encode("utf-8"))
+                finally:
+                    os.close(fd)
 
-        monkeypatch.setattr(os, "replace", racing_replace)
+        monkeypatch.setattr(Path, "unlink", racing_unlink)
         with pytest.raises(WorkspaceBusyError) as excinfo:
             manager.acquire(store, workspace, "run-loser")
-        assert hijacked
+        assert injected
         assert excinfo.value.details["run_id"] == "run-competitor"
         assert excinfo.value.details["reason"] == "held"
         assert json.loads(target.read_text())["run_id"] == "run-competitor"
+
+    def test_stale_lease_changed_before_unlink_is_not_clobbered(
+        self,
+        manager: LeaseManager,
+        store: RunStore,
+        workspace: Path,
+        dead_child: tuple[int, str, int],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """If the stale file is replaced by a live lease after our liveness proof
+        but before our unlink, byte-identity fails and we never remove it."""
+        pid, marker, pgid = dead_child
+        target = write_lease(
+            store,
+            workspace,
+            make_lease(workspace, run_id="run-stale", pid=pid, marker=marker, pgid=pgid),
+        )
+        competitor = make_lease(
+            workspace,
+            run_id="run-live",
+            pid=os.getpid(),
+            marker=_process_start_marker(os.getpid()) or "",
+            pgid=os.getpgrp(),
+        )
+        real_read_bytes = Path.read_bytes
+        reads = 0
+        swapped = False
+
+        def racing_read_bytes(self: Path) -> bytes:
+            nonlocal reads, swapped
+            if self != target:
+                return real_read_bytes(self)
+            reads += 1
+            # Read 1 is the liveness-probe read (still stale); read 2 is the
+            # recovery re-read — by then a live lease has replaced the stale one.
+            if reads == 2:
+                swapped = True
+                target.write_text(competitor.model_dump_json(), encoding="utf-8")
+            return real_read_bytes(self)
+
+        monkeypatch.setattr(Path, "read_bytes", racing_read_bytes)
+        with pytest.raises(WorkspaceBusyError) as excinfo:
+            manager.acquire(store, workspace, "run-loser")
+        assert swapped
+        # The live competitor lease was left intact — never unlinked.
+        assert json.loads(target.read_text())["run_id"] == "run-live"
+        assert excinfo.value.details["run_id"] == "run-live"
+        assert excinfo.value.details["reason"] == "held"
 
 
 class TestAmbiguousStaysBusy:

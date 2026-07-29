@@ -15,8 +15,16 @@ during a run. Order of operations per event:
 can assemble StepResult/RunResult without re-reading it. Byte ceilings compare
 serialized envelope line sizes against ``EventLimits.max_event_bytes_per_step``;
 once a step crosses the ceiling the recorder emits exactly one ``truncation``
-event and every later event for that step keeps its envelope but carries only
-``{"truncated": true, "original_bytes": n}`` (metadata-only continuation).
+event and later events for that step carry only
+``{"truncated": true, "original_bytes": n}`` (metadata-only continuation). That
+continuation is itself bounded (:data:`_MAX_TRUNCATED_CONTINUATION_LINES`): once
+the budget is spent, further events are no longer persisted at all — they are
+counted in memory and the totals are carried on the step's ``step_finished``
+event — so a runaway step cannot grow ``events.jsonl`` without bound.
+
+Oversized single payloads are measured *before* redaction/profile reduction so a
+hostile multi-megabyte frame is reduced to truncation metadata without first
+regex-walking its body (the transport-level frame cap belongs in the SDK layer).
 """
 
 from __future__ import annotations
@@ -116,15 +124,23 @@ _CLASS_SOURCES: dict[str, str] = {
 #: profile reduces only ``thought_chunk`` (REQ-004: standard capture records
 #: only event metadata for thought updates). Both snake_case (native dumps)
 #: and camelCase (wire-shaped payloads) spellings are covered.
+_TOOL_CALL_CONTENT_KEYS: frozenset[str] = frozenset(
+    {"raw", "raw_input", "raw_output", "rawInput", "rawOutput", "content"}
+)
+
 _CONTENT_KEYS: dict[str, frozenset[str]] = {
     "message_chunk": frozenset({"text", "content"}),
     "thought_chunk": frozenset({"text", "content"}),
-    "tool_call": frozenset({"raw", "raw_input", "raw_output", "rawInput", "rawOutput", "content"}),
-    "tool_call_update": frozenset(
-        {"raw", "raw_input", "raw_output", "rawInput", "rawOutput", "content"}
-    ),
+    "tool_call": _TOOL_CALL_CONTENT_KEYS,
+    "tool_call_update": _TOOL_CALL_CONTENT_KEYS,
     "fs_read": frozenset({"content"}),
     "fs_write": frozenset({"content"}),
+    # Permission requests embed the full wire tool_call (rawInput/rawOutput/
+    # content) and terminal ops carry the full command string. Both must be
+    # reduced under the metadata profile so proprietary code / secrets a user
+    # chose to keep off disk never land there (FIX #9).
+    "permission_requested": frozenset({"tool_call"}),
+    "terminal_op": frozenset({"command"}),
 }
 
 _SEVERITY: dict[CaptureStatus, int] = {
@@ -136,7 +152,30 @@ _SEVERITY: dict[CaptureStatus, int] = {
 
 _MAX_RECORDED_PERSISTENCE_ERRORS = 5
 
-_USAGE_KEYS = ("provider", "units", "input_tokens", "output_tokens", "cost", "currency")
+#: Real ``usage`` payload vocabulary emitted by engine/hooks.py from an ACP
+#: ``usage_update`` (see ``ziggy.acp.types.UsageEvent`` / the SDK ``UsageUpdate``
+#: schema). ``used`` is "tokens currently in context" and ``size`` is the
+#: context-window capacity; ``cost`` is the cumulative session cost. This is a
+#: context gauge, not a provider input/output token breakdown -- Ziggy never
+#: receives that split here, so the derived ``UsageSummary`` can never honestly
+#: be reported as ``complete`` (FIX #17).
+_USAGE_TOKEN_KEY = "used"
+_USAGE_SIZE_KEY = "size"
+_USAGE_COST_KEY = "cost"
+_USAGE_CURRENCY_KEY = "currency"
+#: Units label documenting that the surfaced token count is context occupancy,
+#: not an input/output accounting.
+_USAGE_UNITS = "context_tokens"
+
+#: After a step crosses its byte ceiling, at most this many metadata-only
+#: continuation lines are persisted for it; further events are suppressed
+#: (counted in memory, summarized on ``step_finished``) so a runaway step cannot
+#: grow ``events.jsonl`` without bound (FIX #22).
+_MAX_TRUNCATED_CONTINUATION_LINES = 20
+#: Rough per-line envelope overhead, used only to estimate suppressed bytes for
+#: the continuation summary (the exact line was never serialized -- that is the
+#: work we deliberately avoid).
+_CONTINUATION_LINE_OVERHEAD_BYTES = 256
 
 
 def _worse(a: CaptureStatus, b: CaptureStatus) -> CaptureStatus:
@@ -205,6 +244,9 @@ class RunRecorder:
         self._seq = 0
         self._step_bytes: dict[str | None, int] = {}
         self._truncated_steps: set[str | None] = set()
+        self._truncated_continuation: dict[str | None, int] = {}
+        self._suppressed_events: dict[str | None, int] = {}
+        self._suppressed_bytes: dict[str | None, int] = {}
         self._class_counts: dict[str, int] = dict.fromkeys(ARTIFACT_CLASSES, 0)
         self._class_bytes: dict[str, int] = dict.fromkeys(ARTIFACT_CLASSES, 0)
         self._class_truncated: set[str] = set()
@@ -218,7 +260,7 @@ class RunRecorder:
         self._permissions: dict[str | None, list[PermissionDecision]] = {}
         self._text: dict[str | None, list[str]] = {}
         self._usage_seen = 0
-        self._usage: dict[str, Any] = {}
+        self._usage_by_step: dict[str | None, dict[str, Any]] = {}
 
     @property
     def capture_profile(self) -> CaptureProfile:
@@ -265,11 +307,12 @@ class RunRecorder:
     ) -> EventEnvelope | None:
         """Record one canonical event; returns the persisted envelope.
 
-        Returns ``None`` only when the capture profile suppresses the event
-        entirely (``raw_frame`` outside ``debug``); no seq is consumed then.
-        ``capture_status`` may only be degraded by the pipeline (profile
-        reduction and truncation escalate it toward ``partial``), never
-        upgraded.
+        Returns ``None`` when the event is not persisted: the capture profile
+        suppresses it entirely (``raw_frame`` outside ``debug``), or the step's
+        post-truncation continuation budget is spent (FIX #22). No seq is
+        consumed in either case. ``capture_status`` may only be degraded by the
+        pipeline (profile reduction and truncation escalate it toward
+        ``partial``), never upgraded.
         """
         if event_type not in EVENT_TYPES:
             raise ValueError(f"unknown event_type: {event_type!r}")
@@ -279,27 +322,65 @@ class RunRecorder:
             protocol_payload_ref = None
 
         status = CaptureStatus(capture_status)
-        body, counts = self._redactor.redact_payload(dict(payload or {}))
-        mark = RedactionMark(applied=bool(counts), counts=counts)
+        raw_payload = dict(payload or {})
 
-        if self._reduce_for_profile(event_type):
-            body = self._metadata_view(event_type, body)
-            status = _worse(status, CaptureStatus.PARTIAL)
-
-        original_bytes = _json_bytes(body)
+        # FIX #19a: measure the RAW payload size BEFORE redaction / profile
+        # reduction. A single oversized payload is reduced to truncation
+        # metadata without first regex-walking megabytes of hostile content, so
+        # per-frame work stays bounded. (A transport-level frame cap in the SDK
+        # layer -- ziggy.acp -- is deferred hardening, out of this scope.)
+        raw_bytes = _json_bytes(raw_payload)
         replaced = False
-        if original_bytes > self._limits.max_payload_bytes_per_event:
-            body = _truncated_payload(original_bytes)
+        if raw_bytes > self._limits.max_payload_bytes_per_event:
+            body: dict[str, Any] = _truncated_payload(raw_bytes)
+            mark = RedactionMark()  # nothing was persisted, so nothing was scanned
             status = CaptureStatus.PARTIAL
+            original_bytes = raw_bytes
             replaced = True
             self._mark_truncated(event_type, step_id)
+        else:
+            body, counts = self._redactor.redact_payload(raw_payload)
+            mark = RedactionMark(applied=bool(counts), counts=counts)
+            if self._reduce_for_profile(event_type):
+                body = self._metadata_view(event_type, body)
+                status = _worse(status, CaptureStatus.PARTIAL)
+            original_bytes = _json_bytes(body)
 
         if event_type != "truncation":
             if step_id in self._truncated_steps:
-                if not replaced:
-                    body = _truncated_payload(original_bytes)
-                status = CaptureStatus.PARTIAL
-                self._mark_truncated(event_type, step_id)
+                # FIX #22: the step already crossed its byte ceiling. Persist a
+                # bounded number of metadata-only continuation lines, then stop
+                # writing entirely -- counting suppressed events/bytes in memory
+                # -- so a runaway step cannot grow events.jsonl without bound.
+                if event_type == "step_finished":
+                    # Lifecycle event: always persisted, and it carries the
+                    # continuation summary for the step.
+                    if not replaced:
+                        body = _truncated_payload(original_bytes)
+                    body = {
+                        **body,
+                        "suppressed_events": self._suppressed_events.get(step_id, 0),
+                        "suppressed_bytes": self._suppressed_bytes.get(step_id, 0),
+                    }
+                    status = CaptureStatus.PARTIAL
+                    self._mark_truncated(event_type, step_id)
+                else:
+                    if not replaced:
+                        body = _truncated_payload(original_bytes)
+                    status = CaptureStatus.PARTIAL
+                    self._mark_truncated(event_type, step_id)
+                    persisted = self._truncated_continuation.get(step_id, 0)
+                    if persisted >= _MAX_TRUNCATED_CONTINUATION_LINES:
+                        self._suppressed_events[step_id] = (
+                            self._suppressed_events.get(step_id, 0) + 1
+                        )
+                        self._suppressed_bytes[step_id] = (
+                            self._suppressed_bytes.get(step_id, 0)
+                            + _json_bytes(body)
+                            + _CONTINUATION_LINE_OVERHEAD_BYTES
+                        )
+                        return None
+                    self._truncated_continuation[step_id] = persisted + 1
             else:
                 draft = self._make_envelope(
                     seq=self._seq,
@@ -433,12 +514,31 @@ class RunRecorder:
         """Replace content values with ``{"bytes": n, "type": t}`` metadata.
 
         Byte counts describe the redacted content that would otherwise have
-        been persisted, so they can be reported without leaking anything.
+        been persisted, so they can be reported without leaking anything. A
+        nested ``tool_call`` dict (permission_requested payloads) is *recursed*
+        into rather than collapsed whole: identity/status fields stay for
+        auditability while only its content-bearing sub-keys are reduced
+        (FIX #9).
         """
         content_keys = _CONTENT_KEYS[event_type]
         reduced: dict[str, Any] = {}
         for key, value in body.items():
-            if key in content_keys and value is not None:
+            if key not in content_keys or value is None:
+                reduced[key] = value
+            elif key == "tool_call" and isinstance(value, dict):
+                reduced[key] = self._reduce_tool_call(value)
+            else:
+                reduced[key] = {"bytes": _json_bytes(value), "type": type(value).__name__}
+        return reduced
+
+    def _reduce_tool_call(self, tool_call: dict[str, Any]) -> dict[str, Any]:
+        """Reduce a nested wire tool_call to auditable metadata: keep
+        id/kind/title/status (and any other identity keys), replace only the
+        content-bearing sub-keys (rawInput/rawOutput/content/raw) with
+        ``{"bytes": n, "type": t}`` so proprietary code never lands on disk."""
+        reduced: dict[str, Any] = {}
+        for key, value in tool_call.items():
+            if key in _TOOL_CALL_CONTENT_KEYS and value is not None:
                 reduced[key] = {"bytes": _json_bytes(value), "type": type(value).__name__}
             else:
                 reduced[key] = value
@@ -495,10 +595,20 @@ class RunRecorder:
             self._permissions.setdefault(step_id, []).append(decision)
         elif event_type == "usage":
             self._usage_seen += 1
-            for key in _USAGE_KEYS:
+            # ``used`` (context tokens) and ``cost`` (cumulative session cost)
+            # are current-state gauges: the latest non-None value wins WITHIN a
+            # step. Tracking per step means a later step never silently
+            # overwrites an earlier step's counts (FIX #17).
+            step_usage = self._usage_by_step.setdefault(step_id, {})
+            for key in (
+                _USAGE_TOKEN_KEY,
+                _USAGE_SIZE_KEY,
+                _USAGE_COST_KEY,
+                _USAGE_CURRENCY_KEY,
+            ):
                 value = payload.get(key)
                 if value is not None:
-                    self._usage[key] = value
+                    step_usage[key] = value
 
     def _merge_tool_call(self, step_id: str | None, payload: dict[str, Any]) -> None:
         tool_call_id = payload.get("tool_call_id")
@@ -566,17 +676,48 @@ class RunRecorder:
         return "".join(self._text.get(step_id, []))
 
     def usage_summary(self) -> UsageSummary | None:
-        """Latest provider-reported usage, or None when the agent exposed none."""
+        """Provider usage aggregated across steps, honestly labelled (FIX #17).
+
+        The only emitter (engine/hooks.py) forwards an ACP ``usage_update``:
+        ``used`` = tokens currently in context, ``size`` = context-window
+        capacity, ``cost`` = cumulative session cost. That is a context gauge,
+        not an input/output token accounting, so:
+
+        - ``used`` is surfaced as ``input_tokens`` with ``units='context_tokens'``
+          (a documented reinterpretation); ``output_tokens`` stays ``None``
+          because ACP never decomposes it, and ``size`` (capacity, not
+          consumption) has no honest home here -- it stays in the canonical
+          ``usage`` events on disk.
+        - counts are summed per step, never silently overwritten run-wide.
+        - ``capture_status`` is at best ``derived`` (a mapping was needed) and
+          ``partial`` when even ``used`` was absent -- never ``complete``, which
+          would claim a full, timely provider breakdown Ziggy never received.
+        """
         if self._usage_seen == 0:
             return None
+        total_used: int | None = None
+        total_cost: float | None = None
+        currency: str | None = None
+        for step_usage in self._usage_by_step.values():
+            used = step_usage.get(_USAGE_TOKEN_KEY)
+            if isinstance(used, int) and not isinstance(used, bool):
+                total_used = (total_used or 0) + used
+            cost = step_usage.get(_USAGE_COST_KEY)
+            if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+                total_cost = (total_cost or 0.0) + float(cost)
+            step_currency = step_usage.get(_USAGE_CURRENCY_KEY)
+            if isinstance(step_currency, str):
+                currency = step_currency
+        saw_tokens = total_used is not None
+        status = CaptureStatus.DERIVED if saw_tokens else CaptureStatus.PARTIAL
         return UsageSummary(
-            provider=self._usage.get("provider"),
-            units=self._usage.get("units"),
-            input_tokens=self._usage.get("input_tokens"),
-            output_tokens=self._usage.get("output_tokens"),
-            cost=self._usage.get("cost"),
-            currency=self._usage.get("currency"),
-            capture_status="complete",
+            provider=None,
+            units=_USAGE_UNITS if saw_tokens else None,
+            input_tokens=total_used,
+            output_tokens=None,
+            cost=total_cost,
+            currency=currency,
+            capture_status=status.value,
             ceiling_enforceable=False,
         )
 
@@ -589,7 +730,9 @@ class RunRecorder:
           changes from tool calls and mediated writes, never from a verified
           workspace diff.
         - The metadata profile reports content classes (transcript,
-          tool_calls) as ``partial`` with source ``metadata_profile``.
+          tool_calls, permissions) as ``partial`` with source
+          ``metadata_profile``: it reduces transcript/tool content and the
+          tool_call embedded in permission_requested events.
         - Standard-profile thought reduction is that profile's documented
           contract, so it alone does not degrade the transcript class; any
           truncation does.
@@ -601,7 +744,14 @@ class RunRecorder:
         for cls in ARTIFACT_CLASSES:
             status = CaptureStatus.DERIVED if cls == FILE_CHANGES else CaptureStatus.COMPLETE
             source = _CLASS_SOURCES[cls]
-            if self._profile is CaptureProfile.METADATA and cls in (TRANSCRIPT, TOOL_CALLS):
+            if self._profile is CaptureProfile.METADATA and cls in (
+                TRANSCRIPT,
+                TOOL_CALLS,
+                PERMISSIONS,
+            ):
+                # PERMISSIONS is degraded too: the metadata profile reduces the
+                # tool_call embedded in permission_requested events (FIX #9), so
+                # this class is no longer fully captured on disk.
                 status = _worse(status, CaptureStatus.PARTIAL)
                 source = "metadata_profile"
             truncated = cls in self._class_truncated

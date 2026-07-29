@@ -24,6 +24,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -63,6 +64,8 @@ class MockAgent:
             scenarios.ECHO_PROMPT: self._scenario_echo_prompt,
             scenarios.SCRIPTED_JSON: self._scenario_scripted_json,
             scenarios.PLAN_PROBE: self._scenario_plan_probe,
+            scenarios.WEDGE_STDIN: self._scenario_wedge_stdin,
+            scenarios.PERMISSION_REFUSAL: self._scenario_permission_refusal,
         }
         self._prompt_turns = 0
 
@@ -441,6 +444,63 @@ class MockAgent:
         }
         self._chunk(session_id, json.dumps(payload, separators=(",", ":")))
         return "end_turn"
+
+    async def _scenario_wedge_stdin(self, session_id: str) -> str | None:
+        """Request a large mediated read, then STOP reading stdin (FIX #10).
+
+        Announces a child pid (spawned in this process group so ``killpg`` must
+        reap it), fires an ``fs/read_text_file`` request whose large response
+        Ziggy will try to write back, then blocks the event loop forever with a
+        real ``time.sleep`` — the read reply is never consumed, the pipe fills,
+        and Ziggy's ``session/cancel`` drain would block indefinitely. Only the
+        process-group SIGTERM/SIGKILL rungs can tear this agent down."""
+        child = subprocess.Popen(["sleep", "300"])
+        self._chunk(session_id, scenarios.CHILD_PID_PREFIX + str(child.pid))
+        cwd = self._session_cwd.get(session_id, "")
+        path = os.path.join(cwd, scenarios.WEDGE_READ_FILE_NAME)
+        request_id = self._next_request_id
+        self._next_request_id += 1
+        self._send(
+            {
+                "jsonrpc": JSONRPC,
+                "id": request_id,
+                "method": "fs/read_text_file",
+                "params": {"sessionId": session_id, "path": path},
+            }
+        )
+        time.sleep(3600)  # block the loop: never read stdin again; turn stays open
+        return None
+
+    async def _scenario_permission_refusal(self, session_id: str) -> str | None:
+        """Request a (policy-denied) permission, then end the turn as refusal.
+
+        The turn ends ``refusal`` AFTER a denied permission decision, which
+        Ziggy must surface as a typed PermissionDeniedError (FIX #24)."""
+        await self._request(
+            "session/request_permission",
+            {
+                "sessionId": session_id,
+                "toolCall": {
+                    "toolCallId": scenarios.PERMISSION_REFUSAL_TOOL_CALL_ID,
+                    "title": scenarios.PERMISSION_REFUSAL_TOOL_TITLE,
+                    "kind": "execute",
+                    "status": "pending",
+                },
+                "options": [
+                    {
+                        "optionId": scenarios.PERMISSION_ALLOW_OPTION_ID,
+                        "name": "Allow once",
+                        "kind": "allow_once",
+                    },
+                    {
+                        "optionId": scenarios.PERMISSION_REJECT_OPTION_ID,
+                        "name": "Reject once",
+                        "kind": "reject_once",
+                    },
+                ],
+            },
+        )
+        return "refusal"
 
 
 async def _stdin_reader() -> asyncio.StreamReader:
