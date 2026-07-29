@@ -25,6 +25,10 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.6",
 ]
+docs = [
+    "mkdocs-material>=9.5",
+    "pymdown-extensions>=10.7",
+]
 
 [build-system]
 requires = ["hatchling"]

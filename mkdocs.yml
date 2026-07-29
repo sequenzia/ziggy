@@ -1,0 +1,80 @@
+site_name: Ziggy
+site_description: Local execution, orchestration, and audit harness for ACP-speaking AI coding agents
+site_url: ""
+repo_url: https://github.com/sequenzia/ziggy
+repo_name: sequenzia/ziggy
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+extra_css:
+  - stylesheets/extra.css
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Guides:
+      - Running Agents: guides/running-agents.md
+      - Workflows: guides/workflows.md
+      - Orchestration: guides/orchestration.md
+      - ACP Server Mode: guides/acp-server.md
+      - Runs & Audit: guides/runs-and-audit.md
+  - Reference:
+      - CLI: reference/cli.md
+      - Configuration: reference/configuration.md
+      - Trust & Policy: reference/trust-and-policy.md
+      - Schemas: reference/schemas.md
+  - Internals:
+      - Architecture: design/ARCHITECTURE.md
+      - Phase 2 Contracts: design/phase2-contracts.md
+      - Phase 3 Contracts: design/phase3-contracts.md
+      - Phase 4/5 Contracts: design/phase45-contracts.md
+      - Trust Boundary: phase0/trust-boundary.md
+      - SDK Pin Decision: phase0/sdk-pin-decision.md
+      - SDK API Reference: phase0/sdk-api-reference.md
+      - Capability Matrix: phase0/capability-matrix.md
+      - Process Lifecycle: phase0/process-lifecycle.md
+      - Gate Record: GATES.md
+      - Release Checklist: RELEASE-CHECKLIST.md
