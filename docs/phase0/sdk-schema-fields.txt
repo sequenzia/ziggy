@@ -1,0 +1,1440 @@
+### AcceptElicitationResponse
+  content: Optional[Dict[str, Any]]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  action: Literal['accept']  [required]
+
+### AcceptNesNotification
+  session_id: <class 'str'>  [required] alias=sessionId
+  id: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### AcpMcpServer
+  name: <class 'str'>  [required]
+  id: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['acp']  [required]
+
+### AgentAuthCapabilities
+  logout: Optional[LogoutCapabilities]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### AgentCapabilities
+  load_session: Optional[bool]  [optional] alias=loadSession
+  prompt_capabilities: Optional[PromptCapabilities]  [optional] alias=promptCapabilities
+  mcp_capabilities: Optional[McpCapabilities]  [optional] alias=mcpCapabilities
+  session_capabilities: Optional[SessionCapabilities]  [optional] alias=sessionCapabilities
+  auth: Optional[AgentAuthCapabilities]  [optional]
+  providers: Optional[ProvidersCapabilities]  [optional]
+  nes: Optional[NesCapabilities]  [optional]
+  position_encoding: Optional[str]  [optional] alias=positionEncoding
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### AgentErrorMessage
+  id: Union[int, str, NoneType]  [optional]
+  error: <class 'Error'>  [required]
+
+### AgentMessageChunk
+  content: Union[TextContentBlock, ImageContentBlock, AudioContentBlock, ResourceContentBlock, EmbeddedResourceContentBlock]  [required]
+  message_id: Optional[str]  [optional] alias=messageId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  session_update: Literal['agent_message_chunk']  [required] alias=sessionUpdate
+
+### AgentNotification
+  method: <class 'str'>  [required]
+  params: Union[SessionNotification, CompleteElicitationNotification, MessageMcpNotification, Any, NoneType]  [optional]
+
+### AgentPlanContentUpdate
+  plan: Union[PlanUpdateItems, PlanUpdateFile, PlanUpdateMarkdown]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  session_update: Literal['plan_update']  [required] alias=sessionUpdate
+
+### AgentPlanRemovedUpdate
+  id: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  session_update: Literal['plan_removed']  [required] alias=sessionUpdate
+
+### AgentPlanUpdate
+  entries: List[PlanEntry]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  session_update: Literal['plan']  [required] alias=sessionUpdate
+
+### AgentRequest
+  id: Union[int, str, NoneType]  [required]
+  method: <class 'str'>  [required]
+  params: Union[WriteTextFileRequest, ReadTextFileRequest, RequestPermissionRequest, CreateTerminalRequest, TerminalOutputRequest, ReleaseTerminalRequest, WaitForTerminalExitRequest, KillTerminalRequest, ConnectMcpRequest, MessageMcpRequest, DisconnectMcpRequest, CreateFormSessionElicitationRequest, CreateFormRequestElicitationRequest, CreateUrlSessionElicitationRequest, CreateUrlRequestElicitationRequest, Any, NoneType]  [optional]
+
+### AgentResponse
+  root: Union[AgentResponseMessage, AgentErrorMessage]  [required]
+
+### AgentResponseMessage
+  id: Union[int, str, NoneType]  [optional]
+  result: Union[InitializeResponse, AuthenticateResponse, ListProvidersResponse, SetProviderResponse, DisableProviderResponse, LogoutResponse, NewSessionResponse, LoadSessionResponse, ListSessionsResponse, DeleteSessionResponse, ForkSessionResponse, ResumeSessionResponse, CloseSessionResponse, SetSessionModeResponse, SetSessionConfigOptionResponse, PromptResponse, StartNesResponse, SuggestNesResponse, CloseNesResponse, Any]  [required]
+
+### AgentThoughtChunk
+  content: Union[TextContentBlock, ImageContentBlock, AudioContentBlock, ResourceContentBlock, EmbeddedResourceContentBlock]  [required]
+  message_id: Optional[str]  [optional] alias=messageId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  session_update: Literal['agent_thought_chunk']  [required] alias=sessionUpdate
+
+### AllowedOutcome
+  option_id: <class 'str'>  [required] alias=optionId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  outcome: Literal['selected']  [required]
+
+### Annotations
+  audience: Optional[List[str]]  [optional]
+  last_modified: Optional[str]  [optional] alias=lastModified
+  priority: Optional[float]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### AudioContent
+  annotations: Optional[Annotations]  [optional]
+  data: <class 'str'>  [required]
+  mime_type: <class 'str'>  [required] alias=mimeType
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### AudioContentBlock
+  annotations: Optional[Annotations]  [optional]
+  data: <class 'str'>  [required]
+  mime_type: <class 'str'>  [required] alias=mimeType
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['audio']  [required]
+
+### AuthCapabilities
+  terminal: Optional[bool]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### AuthEnvVar
+  name: <class 'str'>  [required]
+  label: Optional[str]  [optional]
+  secret: Optional[bool]  [optional]
+  optional: Optional[bool]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### AuthMethodAgent
+  id: <class 'str'>  [required]
+  name: <class 'str'>  [required]
+  description: Optional[str]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### AuthMethodEnvVar
+  id: <class 'str'>  [required]
+  name: <class 'str'>  [required]
+  description: Optional[str]  [optional]
+  vars: List[AuthEnvVar]  [required]
+  link: Optional[str]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### AuthMethodTerminal
+  id: <class 'str'>  [required]
+  name: <class 'str'>  [required]
+  description: Optional[str]  [optional]
+  args: Optional[List[str]]  [optional]
+  env: Optional[Dict[str, str]]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### AuthenticateRequest
+  method_id: <class 'str'>  [required] alias=methodId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### AuthenticateResponse
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### AvailableCommand
+  name: <class 'str'>  [required]
+  description: <class 'str'>  [required]
+  input: Optional[AvailableCommandInput]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### AvailableCommandInput
+  root: <class 'UnstructuredCommandInput'>  [required]
+
+### AvailableCommandsUpdate
+  available_commands: List[AvailableCommand]  [required] alias=availableCommands
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  session_update: Literal['available_commands_update']  [required] alias=sessionUpdate
+
+### BaseModel
+
+### BlobResourceContents
+  blob: <class 'str'>  [required]
+  mime_type: Optional[str]  [optional] alias=mimeType
+  uri: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### BooleanConfigOptionCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### BooleanPropertySchema
+  title: Optional[str]  [optional]
+  description: Optional[str]  [optional]
+  default: Optional[bool]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### CancelElicitationResponse
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  action: Literal['cancel']  [required]
+
+### CancelNotification
+  session_id: <class 'str'>  [required] alias=sessionId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### CancelRequestNotification
+  request_id: Union[int, str, NoneType]  [required] alias=requestId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ClientCapabilities
+  fs: Optional[FileSystemCapabilities]  [optional]
+  terminal: Optional[bool]  [optional]
+  session: Optional[ClientSessionCapabilities]  [optional]
+  plan: Optional[PlanCapabilities]  [optional]
+  auth: Optional[AuthCapabilities]  [optional]
+  elicitation: Optional[ElicitationCapabilities]  [optional]
+  nes: Optional[ClientNesCapabilities]  [optional]
+  position_encodings: Optional[List[str]]  [optional] alias=positionEncodings
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ClientErrorMessage
+  id: Union[int, str, NoneType]  [optional]
+  error: <class 'Error'>  [required]
+
+### ClientNesCapabilities
+  jump: Optional[NesJumpCapabilities]  [optional]
+  rename: Optional[NesRenameCapabilities]  [optional]
+  search_and_replace: Optional[NesSearchAndReplaceCapabilities]  [optional] alias=searchAndReplace
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ClientNotification
+  method: <class 'str'>  [required]
+  params: Union[CancelNotification, DidOpenDocumentNotification, DidChangeDocumentNotification, DidCloseDocumentNotification, DidSaveDocumentNotification, DidFocusDocumentNotification, AcceptNesNotification, RejectNesNotification, MessageMcpNotification, Any, NoneType]  [optional]
+
+### ClientRequest
+  id: Union[int, str, NoneType]  [required]
+  method: <class 'str'>  [required]
+  params: Union[InitializeRequest, AuthenticateRequest, ListProvidersRequest, SetProviderRequest, DisableProviderRequest, LogoutRequest, NewSessionRequest, LoadSessionRequest, ListSessionsRequest, DeleteSessionRequest, ForkSessionRequest, ResumeSessionRequest, CloseSessionRequest, SetSessionModeRequest, PromptRequest, StartNesRequest, SuggestNesRequest, CloseNesRequest, MessageMcpRequest, SetSessionConfigOptionBooleanRequest, SetSessionConfigOptionSelectRequest, Any, NoneType]  [optional]
+
+### ClientResponse
+  root: Union[ClientResponseMessage, ClientErrorMessage]  [required]
+
+### ClientResponseMessage
+  id: Union[int, str, NoneType]  [optional]
+  result: Union[WriteTextFileResponse, ReadTextFileResponse, RequestPermissionResponse, CreateTerminalResponse, TerminalOutputResponse, ReleaseTerminalResponse, WaitForTerminalExitResponse, KillTerminalResponse, ConnectMcpResponse, DisconnectMcpResponse, AcceptElicitationResponse, DeclineElicitationResponse, CancelElicitationResponse, Any]  [required]
+
+### ClientSessionCapabilities
+  config_options: Optional[SessionConfigOptionsCapabilities]  [optional] alias=configOptions
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### CloseNesRequest
+  session_id: <class 'str'>  [required] alias=sessionId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### CloseNesResponse
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### CloseSessionRequest
+  session_id: <class 'str'>  [required] alias=sessionId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### CloseSessionResponse
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### CompleteElicitationNotification
+  elicitation_id: <class 'str'>  [required] alias=elicitationId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ConfigOptionUpdate
+  config_options: List[Union[SessionConfigOptionSelect, SessionConfigOptionBoolean]]  [required] alias=configOptions
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  session_update: Literal['config_option_update']  [required] alias=sessionUpdate
+
+### ConnectMcpRequest
+  acp_id: <class 'str'>  [required] alias=acpId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ConnectMcpResponse
+  connection_id: <class 'str'>  [required] alias=connectionId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### Content
+  content: Union[TextContentBlock, ImageContentBlock, AudioContentBlock, ResourceContentBlock, EmbeddedResourceContentBlock]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ContentChunk
+  content: Union[TextContentBlock, ImageContentBlock, AudioContentBlock, ResourceContentBlock, EmbeddedResourceContentBlock]  [required]
+  message_id: Optional[str]  [optional] alias=messageId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ContentToolCallContent
+  content: Union[TextContentBlock, ImageContentBlock, AudioContentBlock, ResourceContentBlock, EmbeddedResourceContentBlock]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['content']  [required]
+
+### Cost
+  amount: <class 'float'>  [required]
+  currency: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### CreateFormRequestElicitationRequest
+  request_id: Union[int, str, NoneType]  [required] alias=requestId
+  message: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  mode: Literal['form']  [required]
+  requested_schema: <class 'ElicitationSchema'>  [required] alias=requestedSchema
+
+### CreateFormSessionElicitationRequest
+  session_id: <class 'str'>  [required] alias=sessionId
+  tool_call_id: Optional[str]  [optional] alias=toolCallId
+  message: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  mode: Literal['form']  [required]
+  requested_schema: <class 'ElicitationSchema'>  [required] alias=requestedSchema
+
+### CreateTerminalRequest
+  session_id: <class 'str'>  [required] alias=sessionId
+  command: <class 'str'>  [required]
+  args: Optional[List[str]]  [optional]
+  env: Optional[List[EnvVariable]]  [optional]
+  cwd: Optional[str]  [optional]
+  output_byte_limit: Optional[int]  [optional] alias=outputByteLimit
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### CreateTerminalResponse
+  terminal_id: <class 'str'>  [required] alias=terminalId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### CreateUrlRequestElicitationRequest
+  request_id: Union[int, str, NoneType]  [required] alias=requestId
+  message: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  mode: Literal['url']  [required]
+  elicitation_id: <class 'str'>  [required] alias=elicitationId
+  url: <class 'pydantic.networks.AnyUrl'>  [required]
+
+### CreateUrlSessionElicitationRequest
+  session_id: <class 'str'>  [required] alias=sessionId
+  tool_call_id: Optional[str]  [optional] alias=toolCallId
+  message: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  mode: Literal['url']  [required]
+  elicitation_id: <class 'str'>  [required] alias=elicitationId
+  url: <class 'pydantic.networks.AnyUrl'>  [required]
+
+### CurrentModeUpdate
+  current_mode_id: <class 'str'>  [required] alias=currentModeId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  session_update: Literal['current_mode_update']  [required] alias=sessionUpdate
+
+### DeclineElicitationResponse
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  action: Literal['decline']  [required]
+
+### DeleteSessionRequest
+  session_id: <class 'str'>  [required] alias=sessionId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### DeleteSessionResponse
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### DeniedOutcome
+  outcome: Literal['cancelled']  [required]
+
+### DidChangeDocumentNotification
+  session_id: <class 'str'>  [required] alias=sessionId
+  uri: <class 'str'>  [required]
+  version: <class 'int'>  [required]
+  content_changes: List[TextDocumentContentChangeEvent]  [required] alias=contentChanges
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### DidCloseDocumentNotification
+  session_id: <class 'str'>  [required] alias=sessionId
+  uri: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### DidFocusDocumentNotification
+  session_id: <class 'str'>  [required] alias=sessionId
+  uri: <class 'str'>  [required]
+  version: <class 'int'>  [required]
+  position: <class 'Position'>  [required]
+  visible_range: <class 'Range'>  [required] alias=visibleRange
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### DidOpenDocumentNotification
+  session_id: <class 'str'>  [required] alias=sessionId
+  uri: <class 'str'>  [required]
+  language_id: <class 'str'>  [required] alias=languageId
+  version: <class 'int'>  [required]
+  text: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### DidSaveDocumentNotification
+  session_id: <class 'str'>  [required] alias=sessionId
+  uri: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### Diff
+  path: <class 'str'>  [required]
+  old_text: Optional[str]  [optional] alias=oldText
+  new_text: <class 'str'>  [required] alias=newText
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### DisableProviderRequest
+  id: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### DisableProviderResponse
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### DisconnectMcpRequest
+  connection_id: <class 'str'>  [required] alias=connectionId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### DisconnectMcpResponse
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ElicitationAcceptAction
+  content: Optional[Dict[str, Any]]  [optional]
+
+### ElicitationBooleanPropertySchema
+  title: Optional[str]  [optional]
+  description: Optional[str]  [optional]
+  default: Optional[bool]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['boolean']  [required]
+
+### ElicitationCapabilities
+  form: Optional[ElicitationFormCapabilities]  [optional]
+  url: Optional[ElicitationUrlCapabilities]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ElicitationContentValue
+  root: Union[str, int, float, bool, List[str]]  [required]
+
+### ElicitationFormCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ElicitationFormMode
+  root: Union[ElicitationFormSessionMode, ElicitationFormRequestMode]  [required]
+
+### ElicitationFormRequestMode
+  request_id: Union[int, str, NoneType]  [required] alias=requestId
+  requested_schema: <class 'ElicitationSchema'>  [required] alias=requestedSchema
+
+### ElicitationFormSessionMode
+  session_id: <class 'str'>  [required] alias=sessionId
+  tool_call_id: Optional[str]  [optional] alias=toolCallId
+  requested_schema: <class 'ElicitationSchema'>  [required] alias=requestedSchema
+
+### ElicitationIntegerPropertySchema
+  title: Optional[str]  [optional]
+  description: Optional[str]  [optional]
+  minimum: Optional[int]  [optional]
+  maximum: Optional[int]  [optional]
+  default: Optional[int]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['integer']  [required]
+
+### ElicitationMultiSelectPropertySchema
+  title: Optional[str]  [optional]
+  description: Optional[str]  [optional]
+  min_items: Optional[int]  [optional] alias=minItems
+  max_items: Optional[int]  [optional] alias=maxItems
+  items: Union[UntitledMultiSelectItems, TitledMultiSelectItems]  [required]
+  default: Optional[List[str]]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['array']  [required]
+
+### ElicitationNumberPropertySchema
+  title: Optional[str]  [optional]
+  description: Optional[str]  [optional]
+  minimum: Optional[float]  [optional]
+  maximum: Optional[float]  [optional]
+  default: Optional[float]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['number']  [required]
+
+### ElicitationRequestScope
+  request_id: Union[int, str, NoneType]  [required] alias=requestId
+
+### ElicitationSchema
+  type: Optional[str]  [optional]
+  title: Optional[str]  [optional]
+  properties: Optional[Dict[str, Union[ElicitationStringPropertySchema, ElicitationNumberPropertySchema, ElicitationIntegerPropertySchema, ElicitationBooleanPropertySchema, ElicitationMultiSelectPropertySchema]]]  [optional]
+  required: Optional[List[str]]  [optional]
+  description: Optional[str]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ElicitationSessionScope
+  session_id: <class 'str'>  [required] alias=sessionId
+  tool_call_id: Optional[str]  [optional] alias=toolCallId
+
+### ElicitationStringPropertySchema
+  title: Optional[str]  [optional]
+  description: Optional[str]  [optional]
+  min_length: Optional[int]  [optional] alias=minLength
+  max_length: Optional[int]  [optional] alias=maxLength
+  pattern: Optional[str]  [optional]
+  format: Optional[str]  [optional]
+  default: Optional[str]  [optional]
+  enum: Optional[List[str]]  [optional]
+  one_of: Optional[List[EnumOption]]  [optional] alias=oneOf
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['string']  [required]
+
+### ElicitationUrlCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ElicitationUrlMode
+  root: Union[ElicitationUrlSessionMode, ElicitationUrlRequestMode]  [required]
+
+### ElicitationUrlRequestMode
+  request_id: Union[int, str, NoneType]  [required] alias=requestId
+  elicitation_id: <class 'str'>  [required] alias=elicitationId
+  url: <class 'pydantic.networks.AnyUrl'>  [required]
+
+### ElicitationUrlSessionMode
+  session_id: <class 'str'>  [required] alias=sessionId
+  tool_call_id: Optional[str]  [optional] alias=toolCallId
+  elicitation_id: <class 'str'>  [required] alias=elicitationId
+  url: <class 'pydantic.networks.AnyUrl'>  [required]
+
+### EmbeddedResource
+  annotations: Optional[Annotations]  [optional]
+  resource: Union[TextResourceContents, BlobResourceContents]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### EmbeddedResourceContentBlock
+  annotations: Optional[Annotations]  [optional]
+  resource: Union[TextResourceContents, BlobResourceContents]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['resource']  [required]
+
+### EnumOption
+  const: <class 'str'>  [required]
+  title: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### EnvVarAuthMethod
+  id: <class 'str'>  [required]
+  name: <class 'str'>  [required]
+  description: Optional[str]  [optional]
+  vars: List[AuthEnvVar]  [required]
+  link: Optional[str]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['env_var']  [required]
+
+### EnvVariable
+  name: <class 'str'>  [required]
+  value: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### Error
+  code: <class 'int'>  [required]
+  message: <class 'str'>  [required]
+  data: Optional[Any]  [optional]
+
+### FileEditToolCallContent
+  path: <class 'str'>  [required]
+  old_text: Optional[str]  [optional] alias=oldText
+  new_text: <class 'str'>  [required] alias=newText
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['diff']  [required]
+
+### FileSystemCapabilities
+  read_text_file: Optional[bool]  [optional] alias=readTextFile
+  write_text_file: Optional[bool]  [optional] alias=writeTextFile
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ForkSessionRequest
+  session_id: <class 'str'>  [required] alias=sessionId
+  cwd: <class 'str'>  [required]
+  additional_directories: Optional[List[str]]  [optional] alias=additionalDirectories
+  mcp_servers: Optional[List[Union[HttpMcpServer, SseMcpServer, AcpMcpServer, McpServerStdio]]]  [optional] alias=mcpServers
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ForkSessionResponse
+  session_id: <class 'str'>  [required] alias=sessionId
+  modes: Optional[SessionModeState]  [optional]
+  config_options: Optional[List[Union[SessionConfigOptionSelect, SessionConfigOptionBoolean]]]  [optional] alias=configOptions
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### HttpHeader
+  name: <class 'str'>  [required]
+  value: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### HttpMcpServer
+  name: <class 'str'>  [required]
+  url: <class 'str'>  [required]
+  headers: List[HttpHeader]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['http']  [required]
+
+### ImageContent
+  annotations: Optional[Annotations]  [optional]
+  data: <class 'str'>  [required]
+  mime_type: <class 'str'>  [required] alias=mimeType
+  uri: Optional[str]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ImageContentBlock
+  annotations: Optional[Annotations]  [optional]
+  data: <class 'str'>  [required]
+  mime_type: <class 'str'>  [required] alias=mimeType
+  uri: Optional[str]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['image']  [required]
+
+### Implementation
+  name: <class 'str'>  [required]
+  title: Optional[str]  [optional]
+  version: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### InitializeRequest
+  protocol_version: <class 'int'>  [required] alias=protocolVersion
+  client_capabilities: Optional[ClientCapabilities]  [optional] alias=clientCapabilities
+  client_info: Optional[Implementation]  [optional] alias=clientInfo
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### InitializeResponse
+  protocol_version: <class 'int'>  [required] alias=protocolVersion
+  agent_capabilities: Optional[AgentCapabilities]  [optional] alias=agentCapabilities
+  auth_methods: Optional[List[Union[EnvVarAuthMethod, TerminalAuthMethod, AuthMethodAgent]]]  [optional] alias=authMethods
+  agent_info: Optional[Implementation]  [optional] alias=agentInfo
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### IntegerPropertySchema
+  title: Optional[str]  [optional]
+  description: Optional[str]  [optional]
+  minimum: Optional[int]  [optional]
+  maximum: Optional[int]  [optional]
+  default: Optional[int]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### KillTerminalRequest
+  session_id: <class 'str'>  [required] alias=sessionId
+  terminal_id: <class 'str'>  [required] alias=terminalId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### KillTerminalResponse
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ListProvidersRequest
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ListProvidersResponse
+  providers: List[ProviderInfo]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ListSessionsRequest
+  cwd: Optional[str]  [optional]
+  cursor: Optional[str]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ListSessionsResponse
+  sessions: List[SessionInfo]  [required]
+  next_cursor: Optional[str]  [optional] alias=nextCursor
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### LoadSessionRequest
+  mcp_servers: List[Union[HttpMcpServer, SseMcpServer, AcpMcpServer, McpServerStdio]]  [required] alias=mcpServers
+  cwd: <class 'str'>  [required]
+  additional_directories: Optional[List[str]]  [optional] alias=additionalDirectories
+  session_id: <class 'str'>  [required] alias=sessionId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### LoadSessionResponse
+  modes: Optional[SessionModeState]  [optional]
+  config_options: Optional[List[Union[SessionConfigOptionSelect, SessionConfigOptionBoolean]]]  [optional] alias=configOptions
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### LogoutCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### LogoutRequest
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### LogoutResponse
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### McpCapabilities
+  http: Optional[bool]  [optional]
+  sse: Optional[bool]  [optional]
+  acp: Optional[bool]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### McpServerAcp
+  name: <class 'str'>  [required]
+  id: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### McpServerHttp
+  name: <class 'str'>  [required]
+  url: <class 'str'>  [required]
+  headers: List[HttpHeader]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### McpServerSse
+  name: <class 'str'>  [required]
+  url: <class 'str'>  [required]
+  headers: List[HttpHeader]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### McpServerStdio
+  name: <class 'str'>  [required]
+  command: <class 'str'>  [required]
+  args: List[str]  [required]
+  env: List[EnvVariable]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### MessageMcpNotification
+  connection_id: <class 'str'>  [required] alias=connectionId
+  method: <class 'str'>  [required]
+  params: Optional[Dict[str, Any]]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### MessageMcpRequest
+  connection_id: <class 'str'>  [required] alias=connectionId
+  method: <class 'str'>  [required]
+  params: Optional[Dict[str, Any]]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### MultiSelectPropertySchema
+  title: Optional[str]  [optional]
+  description: Optional[str]  [optional]
+  min_items: Optional[int]  [optional] alias=minItems
+  max_items: Optional[int]  [optional] alias=maxItems
+  items: Union[UntitledMultiSelectItems, TitledMultiSelectItems]  [required]
+  default: Optional[List[str]]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesCapabilities
+  events: Optional[NesEventCapabilities]  [optional]
+  context: Optional[NesContextCapabilities]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesContextCapabilities
+  recent_files: Optional[NesRecentFilesCapabilities]  [optional] alias=recentFiles
+  related_snippets: Optional[NesRelatedSnippetsCapabilities]  [optional] alias=relatedSnippets
+  edit_history: Optional[NesEditHistoryCapabilities]  [optional] alias=editHistory
+  user_actions: Optional[NesUserActionsCapabilities]  [optional] alias=userActions
+  open_files: Optional[NesOpenFilesCapabilities]  [optional] alias=openFiles
+  diagnostics: Optional[NesDiagnosticsCapabilities]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesDiagnostic
+  uri: <class 'str'>  [required]
+  range: <class 'Range'>  [required]
+  severity: <class 'str'>  [required]
+  message: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesDiagnosticsCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesDocumentDidChangeCapabilities
+  sync_kind: <class 'str'>  [required] alias=syncKind
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesDocumentDidCloseCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesDocumentDidFocusCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesDocumentDidOpenCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesDocumentDidSaveCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesDocumentEventCapabilities
+  did_open: Optional[NesDocumentDidOpenCapabilities]  [optional] alias=didOpen
+  did_change: Optional[NesDocumentDidChangeCapabilities]  [optional] alias=didChange
+  did_close: Optional[NesDocumentDidCloseCapabilities]  [optional] alias=didClose
+  did_save: Optional[NesDocumentDidSaveCapabilities]  [optional] alias=didSave
+  did_focus: Optional[NesDocumentDidFocusCapabilities]  [optional] alias=didFocus
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesEditHistoryCapabilities
+  max_count: Optional[int]  [optional] alias=maxCount
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesEditHistoryEntry
+  uri: <class 'str'>  [required]
+  diff: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesEditSuggestion
+  id: <class 'str'>  [required]
+  uri: <class 'str'>  [required]
+  edits: List[NesTextEdit]  [required]
+  cursor_position: Optional[Position]  [optional] alias=cursorPosition
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesEditSuggestionVariant
+  id: <class 'str'>  [required]
+  uri: <class 'str'>  [required]
+  edits: List[NesTextEdit]  [required]
+  cursor_position: Optional[Position]  [optional] alias=cursorPosition
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  kind: Literal['edit']  [required]
+
+### NesEventCapabilities
+  document: Optional[NesDocumentEventCapabilities]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesExcerpt
+  start_line: <class 'int'>  [required] alias=startLine
+  end_line: <class 'int'>  [required] alias=endLine
+  text: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesJumpCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesJumpSuggestion
+  id: <class 'str'>  [required]
+  uri: <class 'str'>  [required]
+  position: <class 'Position'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesJumpSuggestionVariant
+  id: <class 'str'>  [required]
+  uri: <class 'str'>  [required]
+  position: <class 'Position'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  kind: Literal['jump']  [required]
+
+### NesOpenFile
+  uri: <class 'str'>  [required]
+  language_id: <class 'str'>  [required] alias=languageId
+  visible_range: Optional[Range]  [optional] alias=visibleRange
+  last_focused_ms: Optional[int]  [optional] alias=lastFocusedMs
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesOpenFilesCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesRecentFile
+  uri: <class 'str'>  [required]
+  language_id: <class 'str'>  [required] alias=languageId
+  text: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesRecentFilesCapabilities
+  max_count: Optional[int]  [optional] alias=maxCount
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesRelatedSnippet
+  uri: <class 'str'>  [required]
+  excerpts: List[NesExcerpt]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesRelatedSnippetsCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesRenameCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesRenameSuggestion
+  id: <class 'str'>  [required]
+  uri: <class 'str'>  [required]
+  position: <class 'Position'>  [required]
+  new_name: <class 'str'>  [required] alias=newName
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesRenameSuggestionVariant
+  id: <class 'str'>  [required]
+  uri: <class 'str'>  [required]
+  position: <class 'Position'>  [required]
+  new_name: <class 'str'>  [required] alias=newName
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  kind: Literal['rename']  [required]
+
+### NesRepository
+  name: <class 'str'>  [required]
+  owner: <class 'str'>  [required]
+  remote_url: <class 'str'>  [required] alias=remoteUrl
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesSearchAndReplaceCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesSearchAndReplaceSuggestion
+  id: <class 'str'>  [required]
+  uri: <class 'str'>  [required]
+  search: <class 'str'>  [required]
+  replace: <class 'str'>  [required]
+  is_regex: Optional[bool]  [optional] alias=isRegex
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesSearchAndReplaceSuggestionVariant
+  id: <class 'str'>  [required]
+  uri: <class 'str'>  [required]
+  search: <class 'str'>  [required]
+  replace: <class 'str'>  [required]
+  is_regex: Optional[bool]  [optional] alias=isRegex
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  kind: Literal['searchAndReplace']  [required]
+
+### NesSuggestContext
+  recent_files: Optional[List[NesRecentFile]]  [optional] alias=recentFiles
+  related_snippets: Optional[List[NesRelatedSnippet]]  [optional] alias=relatedSnippets
+  edit_history: Optional[List[NesEditHistoryEntry]]  [optional] alias=editHistory
+  user_actions: Optional[List[NesUserAction]]  [optional] alias=userActions
+  open_files: Optional[List[NesOpenFile]]  [optional] alias=openFiles
+  diagnostics: Optional[List[NesDiagnostic]]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesTextEdit
+  range: <class 'Range'>  [required]
+  new_text: <class 'str'>  [required] alias=newText
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesUserAction
+  action: <class 'str'>  [required]
+  uri: <class 'str'>  [required]
+  position: <class 'Position'>  [required]
+  timestamp_ms: <class 'int'>  [required] alias=timestampMs
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NesUserActionsCapabilities
+  max_count: Optional[int]  [optional] alias=maxCount
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NewSessionRequest
+  cwd: <class 'str'>  [required]
+  additional_directories: Optional[List[str]]  [optional] alias=additionalDirectories
+  mcp_servers: List[Union[HttpMcpServer, SseMcpServer, AcpMcpServer, McpServerStdio]]  [required] alias=mcpServers
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NewSessionResponse
+  session_id: <class 'str'>  [required] alias=sessionId
+  modes: Optional[SessionModeState]  [optional]
+  config_options: Optional[List[Union[SessionConfigOptionSelect, SessionConfigOptionBoolean]]]  [optional] alias=configOptions
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### NumberPropertySchema
+  title: Optional[str]  [optional]
+  description: Optional[str]  [optional]
+  minimum: Optional[float]  [optional]
+  maximum: Optional[float]  [optional]
+  default: Optional[float]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### PermissionOption
+  option_id: <class 'str'>  [required] alias=optionId
+  name: <class 'str'>  [required]
+  kind: Literal['allow_once', 'allow_always', 'reject_once', 'reject_always']  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### Plan
+  entries: List[PlanEntry]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### PlanCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### PlanEntry
+  content: <class 'str'>  [required]
+  priority: Literal['high', 'medium', 'low']  [required]
+  status: Literal['pending', 'in_progress', 'completed']  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### PlanFile
+  id: <class 'str'>  [required]
+  uri: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### PlanItems
+  id: <class 'str'>  [required]
+  entries: List[PlanEntry]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### PlanMarkdown
+  id: <class 'str'>  [required]
+  content: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### PlanRemoved
+  id: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### PlanUpdate
+  plan: Union[PlanUpdateItems, PlanUpdateFile, PlanUpdateMarkdown]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### PlanUpdateFile
+  id: <class 'str'>  [required]
+  uri: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['file']  [required]
+
+### PlanUpdateItems
+  id: <class 'str'>  [required]
+  entries: List[PlanEntry]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['items']  [required]
+
+### PlanUpdateMarkdown
+  id: <class 'str'>  [required]
+  content: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['markdown']  [required]
+
+### Position
+  line: <class 'int'>  [required]
+  character: <class 'int'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### PromptCapabilities
+  image: Optional[bool]  [optional]
+  audio: Optional[bool]  [optional]
+  embedded_context: Optional[bool]  [optional] alias=embeddedContext
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### PromptRequest
+  session_id: <class 'str'>  [required] alias=sessionId
+  prompt: List[Union[TextContentBlock, ImageContentBlock, AudioContentBlock, ResourceContentBlock, EmbeddedResourceContentBlock]]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### PromptResponse
+  stop_reason: Literal['end_turn', 'max_tokens', 'max_turn_requests', 'refusal', 'cancelled']  [required] alias=stopReason
+  usage: Optional[Usage]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ProviderCurrentConfig
+  api_type: <class 'str'>  [required] alias=apiType
+  base_url: <class 'str'>  [required] alias=baseUrl
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ProviderInfo
+  id: <class 'str'>  [required]
+  supported: List[str]  [required]
+  required: <class 'bool'>  [required]
+  current: Optional[ProviderCurrentConfig]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ProvidersCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### Range
+  start: <class 'Position'>  [required]
+  end: <class 'Position'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ReadTextFileRequest
+  session_id: <class 'str'>  [required] alias=sessionId
+  path: <class 'str'>  [required]
+  line: Optional[int]  [optional]
+  limit: Optional[int]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ReadTextFileResponse
+  content: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### RejectNesNotification
+  session_id: <class 'str'>  [required] alias=sessionId
+  id: <class 'str'>  [required]
+  reason: Optional[str]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ReleaseTerminalRequest
+  session_id: <class 'str'>  [required] alias=sessionId
+  terminal_id: <class 'str'>  [required] alias=terminalId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ReleaseTerminalResponse
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### RequestPermissionRequest
+  session_id: <class 'str'>  [required] alias=sessionId
+  tool_call: <class 'ToolCallUpdate'>  [required] alias=toolCall
+  options: List[PermissionOption]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### RequestPermissionResponse
+  outcome: Union[DeniedOutcome, AllowedOutcome]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ResourceContentBlock
+  annotations: Optional[Annotations]  [optional]
+  description: Optional[str]  [optional]
+  mime_type: Optional[str]  [optional] alias=mimeType
+  name: <class 'str'>  [required]
+  size: Optional[int]  [optional]
+  title: Optional[str]  [optional]
+  uri: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['resource_link']  [required]
+
+### ResourceLink
+  annotations: Optional[Annotations]  [optional]
+  description: Optional[str]  [optional]
+  mime_type: Optional[str]  [optional] alias=mimeType
+  name: <class 'str'>  [required]
+  size: Optional[int]  [optional]
+  title: Optional[str]  [optional]
+  uri: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ResumeSessionRequest
+  session_id: <class 'str'>  [required] alias=sessionId
+  cwd: <class 'str'>  [required]
+  additional_directories: Optional[List[str]]  [optional] alias=additionalDirectories
+  mcp_servers: Optional[List[Union[HttpMcpServer, SseMcpServer, AcpMcpServer, McpServerStdio]]]  [optional] alias=mcpServers
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ResumeSessionResponse
+  modes: Optional[SessionModeState]  [optional]
+  config_options: Optional[List[Union[SessionConfigOptionSelect, SessionConfigOptionBoolean]]]  [optional] alias=configOptions
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SelectedPermissionOutcome
+  option_id: <class 'str'>  [required] alias=optionId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SessionAdditionalDirectoriesCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SessionCapabilities
+  list: Optional[SessionListCapabilities]  [optional]
+  delete: Optional[SessionDeleteCapabilities]  [optional]
+  additional_directories: Optional[SessionAdditionalDirectoriesCapabilities]  [optional] alias=additionalDirectories
+  fork: Optional[SessionForkCapabilities]  [optional]
+  resume: Optional[SessionResumeCapabilities]  [optional]
+  close: Optional[SessionCloseCapabilities]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SessionCloseCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SessionConfigBoolean
+  current_value: <class 'bool'>  [required] alias=currentValue
+
+### SessionConfigOptionBoolean
+  current_value: <class 'bool'>  [required] alias=currentValue
+  id: <class 'str'>  [required]
+  name: <class 'str'>  [required]
+  description: Optional[str]  [optional]
+  category: Optional[str]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['boolean']  [required]
+
+### SessionConfigOptionSelect
+  current_value: <class 'str'>  [required] alias=currentValue
+  options: Union[List[SessionConfigSelectOption], List[SessionConfigSelectGroup]]  [required]
+  id: <class 'str'>  [required]
+  name: <class 'str'>  [required]
+  description: Optional[str]  [optional]
+  category: Optional[str]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['select']  [required]
+
+### SessionConfigOptionsCapabilities
+  boolean: Optional[BooleanConfigOptionCapabilities]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SessionConfigSelect
+  current_value: <class 'str'>  [required] alias=currentValue
+  options: Union[List[SessionConfigSelectOption], List[SessionConfigSelectGroup]]  [required]
+
+### SessionConfigSelectGroup
+  group: <class 'str'>  [required]
+  name: <class 'str'>  [required]
+  options: List[SessionConfigSelectOption]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SessionConfigSelectOption
+  value: <class 'str'>  [required]
+  name: <class 'str'>  [required]
+  description: Optional[str]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SessionDeleteCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SessionForkCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SessionInfo
+  session_id: <class 'str'>  [required] alias=sessionId
+  cwd: <class 'str'>  [required]
+  additional_directories: Optional[List[str]]  [optional] alias=additionalDirectories
+  title: Optional[str]  [optional]
+  updated_at: Optional[str]  [optional] alias=updatedAt
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SessionInfoUpdate
+  title: Optional[str]  [optional]
+  updated_at: Optional[str]  [optional] alias=updatedAt
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  session_update: Literal['session_info_update']  [required] alias=sessionUpdate
+
+### SessionListCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SessionMode
+  id: <class 'str'>  [required]
+  name: <class 'str'>  [required]
+  description: Optional[str]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SessionModeState
+  current_mode_id: <class 'str'>  [required] alias=currentModeId
+  available_modes: List[SessionMode]  [required] alias=availableModes
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SessionNotification
+  session_id: <class 'str'>  [required] alias=sessionId
+  update: Union[UserMessageChunk, AgentMessageChunk, AgentThoughtChunk, ToolCallStart, ToolCallProgress, AgentPlanUpdate, AgentPlanContentUpdate, AgentPlanRemovedUpdate, AvailableCommandsUpdate, CurrentModeUpdate, ConfigOptionUpdate, SessionInfoUpdate, UsageUpdate]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SessionResumeCapabilities
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SetProviderRequest
+  id: <class 'str'>  [required]
+  api_type: <class 'str'>  [required] alias=apiType
+  base_url: <class 'str'>  [required] alias=baseUrl
+  headers: Optional[Dict[str, str]]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SetProviderResponse
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SetSessionConfigOptionBooleanRequest
+  session_id: <class 'str'>  [required] alias=sessionId
+  config_id: <class 'str'>  [required] alias=configId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  value: <class 'bool'>  [required]
+  type: Literal['boolean']  [required]
+
+### SetSessionConfigOptionResponse
+  config_options: List[Union[SessionConfigOptionSelect, SessionConfigOptionBoolean]]  [required] alias=configOptions
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SetSessionConfigOptionSelectRequest
+  session_id: <class 'str'>  [required] alias=sessionId
+  config_id: <class 'str'>  [required] alias=configId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  value: <class 'str'>  [required]
+
+### SetSessionModeRequest
+  session_id: <class 'str'>  [required] alias=sessionId
+  mode_id: <class 'str'>  [required] alias=modeId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SetSessionModeResponse
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SseMcpServer
+  name: <class 'str'>  [required]
+  url: <class 'str'>  [required]
+  headers: List[HttpHeader]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['sse']  [required]
+
+### StartNesRequest
+  workspace_uri: Optional[str]  [optional] alias=workspaceUri
+  workspace_folders: Optional[List[WorkspaceFolder]]  [optional] alias=workspaceFolders
+  repository: Optional[NesRepository]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### StartNesResponse
+  session_id: <class 'str'>  [required] alias=sessionId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### StringPropertySchema
+  title: Optional[str]  [optional]
+  description: Optional[str]  [optional]
+  min_length: Optional[int]  [optional] alias=minLength
+  max_length: Optional[int]  [optional] alias=maxLength
+  pattern: Optional[str]  [optional]
+  format: Optional[str]  [optional]
+  default: Optional[str]  [optional]
+  enum: Optional[List[str]]  [optional]
+  one_of: Optional[List[EnumOption]]  [optional] alias=oneOf
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SuggestNesRequest
+  session_id: <class 'str'>  [required] alias=sessionId
+  uri: <class 'str'>  [required]
+  version: <class 'int'>  [required]
+  position: <class 'Position'>  [required]
+  selection: Optional[Range]  [optional]
+  trigger_kind: <class 'str'>  [required] alias=triggerKind
+  context: Optional[NesSuggestContext]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### SuggestNesResponse
+  suggestions: List[Union[NesEditSuggestionVariant, NesJumpSuggestionVariant, NesRenameSuggestionVariant, NesSearchAndReplaceSuggestionVariant]]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### Terminal
+  terminal_id: <class 'str'>  [required] alias=terminalId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### TerminalAuthMethod
+  id: <class 'str'>  [required]
+  name: <class 'str'>  [required]
+  description: Optional[str]  [optional]
+  args: Optional[List[str]]  [optional]
+  env: Optional[Dict[str, str]]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['terminal']  [required]
+
+### TerminalExitStatus
+  exit_code: Optional[int]  [optional] alias=exitCode
+  signal: Optional[str]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### TerminalOutputRequest
+  session_id: <class 'str'>  [required] alias=sessionId
+  terminal_id: <class 'str'>  [required] alias=terminalId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### TerminalOutputResponse
+  output: <class 'str'>  [required]
+  truncated: <class 'bool'>  [required]
+  exit_status: Optional[TerminalExitStatus]  [optional] alias=exitStatus
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### TerminalToolCallContent
+  terminal_id: <class 'str'>  [required] alias=terminalId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['terminal']  [required]
+
+### TextContent
+  annotations: Optional[Annotations]  [optional]
+  text: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### TextContentBlock
+  annotations: Optional[Annotations]  [optional]
+  text: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  type: Literal['text']  [required]
+
+### TextDocumentContentChangeEvent
+  range: Optional[Range]  [optional]
+  text: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### TextResourceContents
+  mime_type: Optional[str]  [optional] alias=mimeType
+  text: <class 'str'>  [required]
+  uri: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### TitledMultiSelectItems
+  any_of: List[EnumOption]  [required] alias=anyOf
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ToolCall
+  tool_call_id: <class 'str'>  [required] alias=toolCallId
+  title: <class 'str'>  [required]
+  kind: Optional[Literal['read', 'edit', 'delete', 'move', 'search', 'execute', 'think', 'fetch', 'switch_mode', 'other']]  [optional]
+  status: Optional[Literal['pending', 'in_progress', 'completed', 'failed']]  [optional]
+  content: Optional[List[Union[ContentToolCallContent, FileEditToolCallContent, TerminalToolCallContent]]]  [optional]
+  locations: Optional[List[ToolCallLocation]]  [optional]
+  raw_input: Optional[Any]  [optional] alias=rawInput
+  raw_output: Optional[Any]  [optional] alias=rawOutput
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ToolCallLocation
+  path: <class 'str'>  [required]
+  line: Optional[int]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### ToolCallProgress
+  tool_call_id: <class 'str'>  [required] alias=toolCallId
+  kind: Optional[Literal['read', 'edit', 'delete', 'move', 'search', 'execute', 'think', 'fetch', 'switch_mode', 'other']]  [optional]
+  status: Optional[Literal['pending', 'in_progress', 'completed', 'failed']]  [optional]
+  title: Optional[str]  [optional]
+  content: Optional[List[Union[ContentToolCallContent, FileEditToolCallContent, TerminalToolCallContent]]]  [optional]
+  locations: Optional[List[ToolCallLocation]]  [optional]
+  raw_input: Optional[Any]  [optional] alias=rawInput
+  raw_output: Optional[Any]  [optional] alias=rawOutput
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  session_update: Literal['tool_call_update']  [required] alias=sessionUpdate
+
+### ToolCallStart
+  tool_call_id: <class 'str'>  [required] alias=toolCallId
+  title: <class 'str'>  [required]
+  kind: Optional[Literal['read', 'edit', 'delete', 'move', 'search', 'execute', 'think', 'fetch', 'switch_mode', 'other']]  [optional]
+  status: Optional[Literal['pending', 'in_progress', 'completed', 'failed']]  [optional]
+  content: Optional[List[Union[ContentToolCallContent, FileEditToolCallContent, TerminalToolCallContent]]]  [optional]
+  locations: Optional[List[ToolCallLocation]]  [optional]
+  raw_input: Optional[Any]  [optional] alias=rawInput
+  raw_output: Optional[Any]  [optional] alias=rawOutput
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  session_update: Literal['tool_call']  [required] alias=sessionUpdate
+
+### ToolCallUpdate
+  tool_call_id: <class 'str'>  [required] alias=toolCallId
+  kind: Optional[Literal['read', 'edit', 'delete', 'move', 'search', 'execute', 'think', 'fetch', 'switch_mode', 'other']]  [optional]
+  status: Optional[Literal['pending', 'in_progress', 'completed', 'failed']]  [optional]
+  title: Optional[str]  [optional]
+  content: Optional[List[Union[ContentToolCallContent, FileEditToolCallContent, TerminalToolCallContent]]]  [optional]
+  locations: Optional[List[ToolCallLocation]]  [optional]
+  raw_input: Optional[Any]  [optional] alias=rawInput
+  raw_output: Optional[Any]  [optional] alias=rawOutput
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### UnstructuredCommandInput
+  hint: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### UntitledMultiSelectItems
+  type: <class 'str'>  [required]
+  enum: List[str]  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### Usage
+  total_tokens: <class 'int'>  [required] alias=totalTokens
+  input_tokens: <class 'int'>  [required] alias=inputTokens
+  output_tokens: <class 'int'>  [required] alias=outputTokens
+  thought_tokens: Optional[int]  [optional] alias=thoughtTokens
+  cached_read_tokens: Optional[int]  [optional] alias=cachedReadTokens
+  cached_write_tokens: Optional[int]  [optional] alias=cachedWriteTokens
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### UsageUpdate
+  used: <class 'int'>  [required]
+  size: <class 'int'>  [required]
+  cost: Optional[Cost]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  session_update: Literal['usage_update']  [required] alias=sessionUpdate
+
+### UserMessageChunk
+  content: Union[TextContentBlock, ImageContentBlock, AudioContentBlock, ResourceContentBlock, EmbeddedResourceContentBlock]  [required]
+  message_id: Optional[str]  [optional] alias=messageId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+  session_update: Literal['user_message_chunk']  [required] alias=sessionUpdate
+
+### WaitForTerminalExitRequest
+  session_id: <class 'str'>  [required] alias=sessionId
+  terminal_id: <class 'str'>  [required] alias=terminalId
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### WaitForTerminalExitResponse
+  exit_code: Optional[int]  [optional] alias=exitCode
+  signal: Optional[str]  [optional]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### WorkspaceFolder
+  uri: <class 'str'>  [required]
+  name: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### WriteTextFileRequest
+  session_id: <class 'str'>  [required] alias=sessionId
+  path: <class 'str'>  [required]
+  content: <class 'str'>  [required]
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
+
+### WriteTextFileResponse
+  field_meta: Optional[Dict[str, Any]]  [optional] alias=_meta
