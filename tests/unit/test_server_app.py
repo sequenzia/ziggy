@@ -39,7 +39,7 @@ from ziggy.acp import (  # noqa: E402
 )
 from ziggy.config import load_config  # noqa: E402
 from ziggy.errors import (  # noqa: E402
-    CapabilityError,
+    ConfigError,
     ProtocolError,
     ServerBusyError,
     ValidationError,
@@ -290,12 +290,15 @@ class TestSetConfigOption:
 
 
 class TestPromptDispatch:
-    async def test_orchestrator_route_is_capability_error(
+    async def test_orchestrator_route_without_planner_is_config_error(
         self, server: tuple[ZiggyServer, StubConnection, Path]
     ) -> None:
+        """The default route now dispatches to the Phase-5 orchestrator: with
+        no ``orchestrator.agent`` configured, the prepare-time gate raises a
+        typed ConfigError before any subprocess and releases admission."""
         srv, _, workspace = server
         session_id = await open_session(srv, workspace)
-        with pytest.raises(CapabilityError, match="Phase 5"):
+        with pytest.raises(ConfigError, match=r"orchestrator\.agent"):
             await srv.prompt(session_id=session_id, text="do things")
         assert srv._active == {}
 

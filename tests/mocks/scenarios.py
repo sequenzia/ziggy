@@ -26,6 +26,8 @@ SLOW_STREAM = "slow_stream"
 SECRET_LEAK = "secret_leak"
 ENV_ECHO = "env_echo"
 ECHO_PROMPT = "echo_prompt"
+SCRIPTED_JSON = "scripted_json"
+PLAN_PROBE = "plan_probe"
 
 ALL_SCENARIOS: tuple[str, ...] = (
     HELLO,
@@ -41,6 +43,8 @@ ALL_SCENARIOS: tuple[str, ...] = (
     SECRET_LEAK,
     ENV_ECHO,
     ECHO_PROMPT,
+    SCRIPTED_JSON,
+    PLAN_PROBE,
 )
 
 #: Scenarios the SDK-backed fixture (sdk_agent.py) supports.
@@ -173,3 +177,23 @@ ENV_ECHO_SEPARATOR = ","
 #: updates of at most this many characters each, so workflow tests can assert
 #: the EXACT composed prompt a downstream step received (delimiters included).
 ECHO_PROMPT_CHUNK_CHARS = 4096
+
+# --- scripted_json --------------------------------------------------------
+# Mock ORCHESTRATOR PLANNER: the first prompt turn is answered with the
+# literal text of $MOCK_PLAN_JSON, every later prompt turn (the repair turn)
+# with $MOCK_PLAN_JSON_2 (falling back to $MOCK_PLAN_JSON when unset). The
+# payloads reach the subprocess through the agent's trusted-config literal
+# ``env`` table — the planning profile forwards no other parent variables.
+
+MOCK_PLAN_JSON_ENV = "MOCK_PLAN_JSON"
+MOCK_PLAN_JSON_2_ENV = "MOCK_PLAN_JSON_2"
+
+# --- plan_probe -----------------------------------------------------------
+# Planning-isolation probe: emits ONE compact-JSON object describing what the
+# planner subprocess can actually observe — its cwd, the entries of that cwd,
+# and its sorted environment variable NAMES (never values). The object is not
+# a valid plan, so a probing run ends OrchestratorPlanInvalid after repair.
+
+PLAN_PROBE_CWD_KEY = "cwd"
+PLAN_PROBE_ENTRIES_KEY = "cwd_entries"
+PLAN_PROBE_ENV_KEYS_KEY = "env_keys"

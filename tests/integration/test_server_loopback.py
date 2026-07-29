@@ -59,25 +59,54 @@ HELLO_CHUNKS = list(scenarios.HELLO_CHUNKS)
 # ------------------------------------------------------------------ fixtures
 
 
-def _agent_toml(name: str, scenario: str) -> str:
-    return (
+def _agent_toml(
+    name: str, scenario: str, *, eligible: bool = False, env: dict[str, str] | None = None
+) -> str:
+    text = (
         f"[agents.{name}]\n"
         f"command = {json.dumps(sys.executable)}\n"
         f"args = [{json.dumps(str(RAW_AGENT_PATH))}, {json.dumps(scenario)}]\n"
         'provider = "mock"\n'
     )
+    if eligible:
+        text += "orchestration_eligible = true\n"
+    if env:
+        text += f"[agents.{name}.env]\n"
+        for key, value in env.items():
+            text += f"{key} = {json.dumps(value)}\n"
+    return text
 
+
+#: The scripted planner's canned answer for the orchestrator route: a valid
+#: single_agent plan targeting the eligible mock-hello execution agent.
+ORCH_PLAN_JSON = json.dumps(
+    {
+        "plan_type": "single_agent",
+        "rationale": "mock-hello can greet directly",
+        "agent": "mock-hello",
+        "prompt": "say hello",
+    }
+)
 
 CONFIG_TOML = (
     "schema_version = 1\n"
     "[engine]\n"
     "default_step_timeout_seconds = 30\n"
     "cancel_grace_seconds = 1.0\n"
-    + _agent_toml("mock-hello", scenarios.HELLO)
+    "[orchestrator]\n"
+    'agent = "mock-planner"\n'
+    'eligible_agents = ["mock-hello"]\n'
+    "allow_uncontained_planner = true\n"
+    + _agent_toml("mock-hello", scenarios.HELLO, eligible=True)
     + _agent_toml("mock-slow", scenarios.SLOW_STREAM)
     + _agent_toml("mock-perm-read", scenarios.PERMISSION_READ)
     + _agent_toml("mock-perm-outside", scenarios.PERMISSION_OUTSIDE)
     + _agent_toml("mock-stubborn", scenarios.IGNORE_CANCEL)
+    + _agent_toml(
+        "mock-planner",
+        scenarios.SCRIPTED_JSON,
+        env={scenarios.MOCK_PLAN_JSON_ENV: ORCH_PLAN_JSON},
+    )
 )
 
 PAIR_WF = """\
@@ -239,6 +268,69 @@ class TestRoutes:
             assert data["status"] == "success"
             assert data["steps"]["first"]["status"] == "success"
             assert data["steps"]["second"]["status"] == "success"
+            client.assert_stdout_jsonrpc()
+
+
+# ------------------------------------------------------- orchestrator route
+
+
+class TestOrchestratorRoute:
+    async def test_default_route_plans_executes_streams_and_persists(
+        self, env: tuple[Path, Path]
+    ) -> None:
+        """REQ-013 over the real wire: a prompt on the DEFAULT route runs the
+        scripted planner, executes the validated plan, streams BOTH the
+        plan-step and execute-step updates to the client, and persists one
+        RunResult of kind ``orchestrator`` with the plan + plan_validation."""
+        home, workspace = env
+        async with spawn_server(home, workspace) as client:
+            await initialize(client)
+            session_id, opened = await new_session(client, workspace)
+            # The orchestrator IS the default route: no set_config_option needed.
+            assert route_option(opened)["currentValue"] == "orchestrator"
+
+            result = await client.request(
+                "session/prompt",
+                prompt_params(session_id, "greet the team"),
+                timeout=PROMPT_TIMEOUT,
+            )
+            assert result["stopReason"] == "end_turn"
+
+            # Both stages streamed with run/step correlation: the plan step,
+            # then the namespaced execution step.
+            run_id = only_run_id(client, session_id)
+            step_ids = {meta.get("step_id") for meta in client.metas(session_id)}
+            assert {"plan", "execute/main"} <= step_ids
+            texts = client.chunk_texts(session_id)
+            assert "[step plan] started (agent: mock-planner)" in texts
+            assert "[step plan] finished: success" in texts
+            assert "[step execute/main] started (agent: mock-hello)" in texts
+            assert "[step execute/main] finished: success" in texts
+            assert texts.index("[step plan] finished: success") < texts.index(
+                "[step execute/main] started (agent: mock-hello)"
+            )
+            # The execution agent's own chunks streamed through verbatim.
+            agent_texts = client.agent_texts(session_id)
+            for chunk in HELLO_CHUNKS:
+                assert chunk in agent_texts
+            # No permission request was ever forwarded (planning permissions
+            # resolve locally against the isolation policy by design).
+            assert client.permission_requests == []
+
+            # Persisted RunResult: kind orchestrator, plan + validation inside.
+            data = read_result(home, run_id)
+            assert data["kind"] == "orchestrator"
+            assert data["target"] == "mock-planner"
+            assert data["status"] == "success"
+            assert data["persisted"] is True
+            assert data["plan"]["plan_type"] == "single_agent"
+            assert data["plan"]["agent"] == "mock-hello"
+            assert data["plan_validation"]["valid"] is True
+            assert data["plan_validation"]["attempt_count"] == 1
+            assert data["steps"]["plan"]["status"] == "success"
+            assert data["steps"]["execute/main"]["status"] == "success"
+            assert data["steps"]["execute/main"]["outputs"]["text"] == "".join(HELLO_CHUNKS)
+            assert data["policy"]["policy_name"] == "guarded"
             client.assert_stdout_jsonrpc()
 
 

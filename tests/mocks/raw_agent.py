@@ -61,7 +61,10 @@ class MockAgent:
             scenarios.SECRET_LEAK: self._scenario_secret_leak,
             scenarios.ENV_ECHO: self._scenario_env_echo,
             scenarios.ECHO_PROMPT: self._scenario_echo_prompt,
+            scenarios.SCRIPTED_JSON: self._scenario_scripted_json,
+            scenarios.PLAN_PROBE: self._scenario_plan_probe,
         }
+        self._prompt_turns = 0
 
     # --- wire helpers ----------------------------------------------------
 
@@ -403,6 +406,40 @@ class MockAgent:
         step = scenarios.ECHO_PROMPT_CHUNK_CHARS
         for start in range(0, len(text), step):
             self._chunk(session_id, text[start : start + step])
+        return "end_turn"
+
+    async def _scenario_scripted_json(self, session_id: str) -> str | None:
+        """Mock orchestrator planner emitting canned JSON payloads.
+
+        The first prompt turn answers with $MOCK_PLAN_JSON, every later turn
+        (the repair turn) with $MOCK_PLAN_JSON_2 (falling back to
+        $MOCK_PLAN_JSON when unset). The payloads arrive via the agent's
+        trusted-config literal env table.
+        """
+        self._prompt_turns += 1
+        if self._prompt_turns == 1:
+            text = os.environ.get(scenarios.MOCK_PLAN_JSON_ENV, "")
+        else:
+            text = os.environ.get(scenarios.MOCK_PLAN_JSON_2_ENV) or os.environ.get(
+                scenarios.MOCK_PLAN_JSON_ENV, ""
+            )
+        self._chunk(session_id, text)
+        return "end_turn"
+
+    async def _scenario_plan_probe(self, session_id: str) -> str | None:
+        """Planning-isolation probe: report cwd, cwd entries, and env NAMES.
+
+        The emitted object is deliberately NOT a valid plan, so a probing
+        orchestration ends OrchestratorPlanInvalid after the repair turn while
+        the test inspects what the planner subprocess could observe. Values
+        are never echoed — only sorted environment variable names.
+        """
+        payload = {
+            scenarios.PLAN_PROBE_CWD_KEY: os.getcwd(),
+            scenarios.PLAN_PROBE_ENTRIES_KEY: sorted(os.listdir(".")),
+            scenarios.PLAN_PROBE_ENV_KEYS_KEY: sorted(os.environ),
+        }
+        self._chunk(session_id, json.dumps(payload, separators=(",", ":")))
         return "end_turn"
 
 

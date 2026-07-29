@@ -4,8 +4,10 @@
 :class:`ZiggyServer` implements the native ``ZiggyAgentProtocol`` surface —
 SDK-free; the :mod:`ziggy.acp.server` wrapper owns every SDK model — and
 routes ``session/prompt`` turns into the ordinary engine paths
-(``prepare_run``/``execute_run`` and ``prepare_workflow``/``execute_workflow``),
-so server-mode runs persist the exact same RunResults as CLI runs.
+(``prepare_run``/``execute_run``, ``prepare_workflow``/``execute_workflow``,
+and ``prepare_orchestration``/``run_orchestration`` for the default
+``orchestrator`` route), so server-mode runs persist the exact same
+RunResults as CLI runs.
 
 Key behaviors:
 
@@ -30,6 +32,11 @@ Key behaviors:
   that cannot receive permission requests flips the session to guarded local
   mediation with one visible fallback notice. Every decision is recorded with
   ``client_response`` (the final decision is always the policy intersection).
+  On the orchestrator route the bridge governs EXECUTION (``execute/*``)
+  steps only: planning-step permission requests are never routed to the
+  bridge — the planning isolation policy (deny-write/deny-terminal, reads
+  only inside the empty temp dir) decides them locally inside the planner
+  session by design.
 - **Stop mapping** (documented honest mapping): run ``success``/``partial``
   → ``end_turn``; ``cancelled`` → ``cancelled``; ``failed`` → a final
   error-summary notice then ``end_turn`` — ACP v1 has no error stop reason
@@ -71,9 +78,8 @@ from ziggy.acp import (
 from ziggy.agents import AgentRegistry
 from ziggy.config import ResolvedConfig, load_config
 from ziggy.engine import MAIN_STEP_ID, RunOverrides, execute_run, prepare_run
-from ziggy.engine.prepare import prepare_workflow
+from ziggy.engine.prepare import prepare_orchestration, prepare_workflow
 from ziggy.errors import (
-    CapabilityError,
     ProtocolError,
     ServerBusyError,
     TypedError,
@@ -83,6 +89,8 @@ from ziggy.ids import utc_now_iso
 from ziggy.models.common import EnforcementScope, PermissionDecisionKind, RunStatus
 from ziggy.models.events import EventEnvelope
 from ziggy.models.result import RunResult
+from ziggy.orchestrator.execute import EXECUTE_PREFIX
+from ziggy.orchestrator.planner import run_orchestration
 from ziggy.policy import Decision, MediationPolicy
 from ziggy.workflows import DiscoveredWorkflow, discover
 from ziggy.workflows.runner import execute_workflow
@@ -292,6 +300,17 @@ class _RunBridge:
     - ``decide_permission`` implements the permission bridge (policy ceiling
       first, then client forwarding, then guarded fallback) and returns the
       ``(reply, decision_payload)`` pair the engine hooks record.
+
+    ``execution_fallback_policy`` exists for the orchestrator route: the plan
+    — and with it the per-step execution policies — is produced mid-run, so
+    ``execute/*`` steps cannot be pre-registered in ``step_policies``. The
+    fallback (the guarded workspace ceiling with the trusted default profile)
+    serves as the bridge ceiling for exactly those steps; it is identical to
+    the real step policy for every inline/single-agent step (the restricted
+    plan schema cannot express working_dir/policy fields), and local fs/
+    terminal mediation always uses the true per-step policy regardless.
+    Steps without a registered policy AND without an applicable fallback
+    still fail toward denial.
     """
 
     def __init__(
@@ -302,12 +321,14 @@ class _RunBridge:
         step_policies: dict[str, MediationPolicy],
         step_agents: dict[str, str],
         target: str,
+        execution_fallback_policy: MediationPolicy | None = None,
     ) -> None:
         self._session = session
         self._connection = connection
         self._step_policies = step_policies
         self._step_agents = step_agents
         self._target = target
+        self._execution_fallback_policy = execution_fallback_policy
         self._queue: asyncio.Queue[EventEnvelope | None] = asyncio.Queue()
         self._drain_task: asyncio.Task[None] | None = None
         self._emit_failed = False
@@ -441,6 +462,15 @@ class _RunBridge:
         """
         step_id = self.current_step
         policy = self._step_policies.get(step_id) if step_id is not None else None
+        if (
+            policy is None
+            and step_id is not None
+            and step_id.startswith(EXECUTE_PREFIX)
+            and self._execution_fallback_policy is not None
+        ):
+            # Orchestrator route: plan-derived execution steps use the guarded
+            # workspace ceiling (see the class docstring).
+            policy = self._execution_fallback_policy
         if policy is None:
             # No active step to attribute the request to: fail toward denial.
             return (
@@ -669,12 +699,12 @@ class ZiggyServer:
                 f"unknown session {session_id!r}", details={"session_id": session_id}
             )
         route = session.route
-        if route == DEFAULT_ROUTE:
-            raise CapabilityError("orchestrator lands in Phase 5", details={"route": route})
         handle = await self._admit(session_id)
         bridge: _RunBridge | None = None
         try:
-            if route.startswith(_AGENT_ROUTE_PREFIX):
+            if route == DEFAULT_ROUTE:
+                runner, bridge = self._orchestrator_run(session, text, handle)
+            elif route.startswith(_AGENT_ROUTE_PREFIX):
                 agent_name = route.removeprefix(_AGENT_ROUTE_PREFIX)
                 runner, bridge = self._agent_run(session, agent_name, text, handle)
             elif route.startswith(_WORKFLOW_ROUTE_PREFIX):
@@ -772,6 +802,61 @@ class ZiggyServer:
             try:
                 return await execute_run(
                     prepared.spec,
+                    render_cb=bridge.render_cb,
+                    cancel_event=handle.cancel_event,
+                    decide_permission=bridge.decide_permission,
+                )
+            finally:
+                await bridge.aclose()
+                prepared.logger.close()
+
+        return run(), bridge
+
+    def _orchestrator_run(
+        self, session: SessionState, goal: str, handle: _ActiveRun
+    ) -> tuple[Coroutine[Any, Any, RunResult], _RunBridge]:
+        """Prepare the Phase-5 default-route run: the prompt text IS the goal.
+
+        ``prepare_orchestration`` raises its typed gates (``ConfigError`` for
+        an unset ``orchestrator.agent``, ``TrustPolicyError`` for an
+        unacknowledged uncontained planner) BEFORE any subprocess; the wrapper
+        surfaces them to the client as JSON-RPC errors. The permission bridge
+        applies to EXECUTION steps only, via the ``execute/*`` fallback
+        ceiling — planning-step permission requests are never forwarded: the
+        engine resolves them locally with the planning isolation policy
+        (deny-write/deny-terminal) by design, so a client approval can never
+        widen the planning profile.
+        """
+        prepared = prepare_orchestration(
+            session.resolved,
+            goal=goal,
+            workspace=session.cwd,
+            overrides=RunOverrides(),
+        )
+        if self._store_root is not None:
+            prepared.store_root = self._store_root
+        permissions = session.resolved.config.permissions
+        execution_ceiling = MediationPolicy.guarded(
+            workspace=session.cwd,
+            step_dir=session.cwd,
+            profile=permissions.profiles.get(permissions.default_policy),
+            project_denials=permissions.project_denials,
+            profile_name=permissions.default_policy,
+        )
+        bridge = _RunBridge(
+            session=session,
+            connection=self._connection,
+            step_policies={},
+            step_agents={},
+            target=prepared.planner_agent.name,
+            execution_fallback_policy=execution_ceiling,
+        )
+
+        async def run() -> RunResult:
+            bridge.start()
+            try:
+                return await run_orchestration(
+                    prepared,
                     render_cb=bridge.render_cb,
                     cancel_event=handle.cancel_event,
                     decide_permission=bridge.decide_permission,

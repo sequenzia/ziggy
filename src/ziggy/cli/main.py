@@ -1,12 +1,15 @@
-"""Ziggy CLI (REQ-003/014/015): the typer command surface.
+"""Ziggy CLI (REQ-003/013/014/015): the typer command surface.
 
-Command semantics per spec §5.2: headless one-shot ``run``, workflow execution
-and discovery under ``workflow``, run browsing under ``runs``, config
-inspection under ``config``, ``agents list``, and ``doctor``.
-Exit codes: 0 success; 1 execution or required-persistence failure; 2
-usage/config/trust errors (typer usage errors included); 130 user
-cancellation. Under ``--json`` stdout carries ONLY the machine-readable
-document (final RunResult for ``run``); progress and diagnostics go to stderr.
+Command semantics per spec §5.2: headless one-shot ``run``, plan-then-execute
+``orchestrate``, workflow execution and discovery under ``workflow``, run
+browsing under ``runs``, config inspection under ``config``, ``agents list``,
+and ``doctor``.
+Exit codes: 0 success; 1 execution or required-persistence failure (an
+invalid orchestrator plan included); 2 usage/config/trust errors (typer usage
+errors, an unconfigured/unacknowledged planner, and unacknowledged egress
+included); 130 user cancellation. Under ``--json`` stdout carries ONLY the
+machine-readable document (final RunResult for ``run``/``orchestrate``);
+progress and diagnostics go to stderr.
 
 SIGINT during ``ziggy run``: the first Ctrl-C sets the engine's cancel event
 (clean teardown ladder, terminal state ``cancelled``, exit 130); a second
@@ -38,12 +41,18 @@ from ziggy.cli.doctor import run_checks
 from ziggy.cli.render import RunRenderer, format_table, run_show_lines, use_plain
 from ziggy.config import ResolvedConfig, ZiggyConfig, load_config
 from ziggy.engine import RunOverrides, execute_run, prepare_run
-from ziggy.engine.prepare import prepare_workflow
+from ziggy.engine.prepare import prepare_orchestration, prepare_workflow
 from ziggy.errors import ERROR_CLASSES, PersistenceError, ZiggyError
 from ziggy.ids import is_run_id, utc_now
 from ziggy.models.common import CaptureProfile, RunStatus
+from ziggy.models.plan import (
+    NamedWorkflowPlan,
+    OrchestratorPlan,
+    SingleAgentPlan,
+)
 from ziggy.models.result import RunResult
 from ziggy.models.workflow import WorkflowDef
+from ziggy.orchestrator.planner import run_orchestration
 from ziggy.server import ZiggyServer
 from ziggy.store import IndexRow, RunIndex, RunStore
 from ziggy.workflows import discover, parse_var_args
@@ -222,6 +231,110 @@ def run(
     renderer.finish(result)
     if json_output:
         sys.stdout.write(result.model_dump_json(indent=2) + "\n")
+    raise typer.Exit(exit_code_for(result))
+
+
+# ---------------------------------------------------------------- orchestrate
+
+
+def _plan_summary_lines(plan: OrchestratorPlan) -> list[str]:
+    """Compact human-readable summary of a validated plan (REQ-013).
+
+    The rationale (and every generated prompt) is planner MODEL output whose
+    semantics were never validated: only the first 200 rationale characters
+    are shown, and prompts are never echoed here — the full (redacted) plan
+    lives in the persisted RunResult.
+    """
+    rationale = " ".join(plan.rationale.split())
+    if len(rationale) > 200:
+        rationale = rationale[:200] + "..."
+    lines = ["--- plan ---", f"type: {plan.plan_type}", f"rationale: {rationale}"]
+    if isinstance(plan, SingleAgentPlan):
+        lines.append(f"steps: execute/main (agent: {plan.agent})")
+    elif isinstance(plan, NamedWorkflowPlan):
+        variables = ", ".join(sorted(plan.variables)) if plan.variables else "-"
+        lines.append(f"workflow: {plan.workflow_name} (variables: {variables})")
+    else:  # InlineAgentWorkflowPlan
+        lines.append(f"steps ({len(plan.steps)}):")
+        for step in plan.steps:
+            after = f" (after: {', '.join(step.depends_on)})" if step.depends_on else ""
+            lines.append(f"  execute/{step.id}: agent {step.agent}{after}")
+    return lines
+
+
+@app.command()
+def orchestrate(
+    goal: Annotated[
+        str, typer.Argument(help="Natural-language goal handed to the configured planner.")
+    ],
+    plan_only: Annotated[
+        bool,
+        typer.Option(
+            "--plan-only",
+            help="Validate and return the plan without launching execution.",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="stdout carries only the final RunResult JSON."),
+    ] = False,
+    no_save: Annotated[bool, typer.Option("--no-save", help="Do not persist this run.")] = False,
+    capture: Annotated[
+        CaptureProfile | None,
+        typer.Option("--capture", help="Capture profile override (direct user intent)."),
+    ] = None,
+    plain: Annotated[
+        bool, typer.Option("--plain", help="Line-oriented output without ANSI escapes.")
+    ] = False,
+    acknowledge_egress: Annotated[
+        str | None,
+        typer.Option(
+            "--acknowledge-egress",
+            help="Comma-separated provider set whose egress is acknowledged.",
+        ),
+    ] = None,
+) -> None:
+    """Plan-then-execute one goal via the configured orchestrator (REQ-013).
+
+    Exit codes follow the RunResult's typed errors: 0 for a successful run (a
+    valid plan under ``--plan-only``/``auto_execute = false`` included), 1 for
+    an invalid plan (``OrchestratorPlanInvalid``) or execution failure, 2 for
+    config/trust gates (``orchestrator.agent`` unset, uncontained-planner
+    refusal, unacknowledged provider crossing), 130 for user cancellation.
+    """
+    workspace = Path.cwd()
+    resolved = _load_config(workspace)
+    overrides = RunOverrides(
+        no_save=no_save,
+        capture=capture,
+        acknowledge_egress=_parse_provider_flag(acknowledge_egress),
+        plan_only=plan_only,
+    )
+    try:
+        prepared = prepare_orchestration(
+            resolved, goal=goal, workspace=workspace, overrides=overrides
+        )
+    except ZiggyError as exc:
+        _fail(exc)
+    progress = sys.stderr if json_output else sys.stdout
+    renderer = RunRenderer(progress, plain=use_plain(progress, plain_flag=plain))
+    try:
+        result = asyncio.run(
+            _execute_with_sigint(
+                lambda cancel_event: run_orchestration(
+                    prepared, render_cb=renderer.on_event, cancel_event=cancel_event
+                )
+            )
+        )
+    finally:
+        renderer.close()
+        prepared.logger.close()
+    renderer.finish(result)
+    if json_output:
+        sys.stdout.write(result.model_dump_json(indent=2) + "\n")
+    elif result.plan is not None:
+        for line in _plan_summary_lines(result.plan):
+            print(line)
     raise typer.Exit(exit_code_for(result))
 
 

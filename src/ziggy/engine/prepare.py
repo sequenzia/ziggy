@@ -41,13 +41,45 @@ metadata logger. The result is the launch-ready
 inside the function — a module-scope import would create an import cycle
 through ``ziggy.engine.__init__ -> prepare -> workflows.runner ->
 ziggy.engine.runner``.
+
+Phase 5 adds :func:`prepare_orchestration` — the pre-launch seam for
+``ziggy orchestrate`` (REQ-013). It owns every trusted-config decision that
+must happen before the planning agent can even be considered:
+
+- ``orchestrator.agent`` unset or unknown ⇒ ``ConfigError`` (exit 2). The
+  planner does NOT need ``orchestration_eligible`` — that flag is the trusted
+  user allowlist for agents a model-generated plan may INVOKE; who plans is
+  the separate ``orchestrator.agent`` decision.
+- The uncontained-planner gate: a planner with ``direct_tools_assumed`` (both
+  v0.1 builtins, and every custom agent) is refused with ``TrustPolicyError``
+  (exit 2) unless trusted user config sets
+  ``orchestrator.allow_uncontained_planner = true`` (USER_ONLY — project
+  scope cannot set it). The acknowledgement is recorded in the run's policy
+  provenance with ``advisory`` enforcement.
+- Catalog build (``ConfigError`` for eligible-agent incoherence) and the
+  deterministic meta-prompt, whose composed UTF-8 size (goal included) must
+  fit ``engine.max_prompt_bytes`` (``ResourceLimitError``).
+- The planning child environment: the documented minimal baseline plus the
+  planner's explicit trusted-config values ONLY — composed via
+  ``compose_child_env`` over a stripped AgentConfig copy whose
+  ``inherit_env`` passthrough list is cleared, so no parent variable beyond
+  the baseline (HOME/PATH/TERM/LANG) reaches the planner. The agent's
+  literal ``env`` table and ``api_key_env`` remain: both are explicit
+  trusted-user declarations, not parent-environment inheritance.
+- Redaction seeding: the planner's credential plus best-effort ``api_key_env``
+  values of every registered agent present in the parent env (execution
+  targets are chosen by the plan, after the run's Redactor exists) plus the
+  configured extra values/patterns.
+
+The orchestrator catalog module is imported lazily to keep
+``ziggy.engine.__init__`` import-time free of the orchestrator package.
 """
 
 from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -55,8 +87,9 @@ from ziggy.agents import AgentRegistry
 from ziggy.config import ResolvedConfig, ZiggyConfig
 from ziggy.engine.env import compose_child_env
 from ziggy.engine.hooks import MetadataLoggerLike
+from ziggy.engine.lease import LeaseManager
 from ziggy.engine.runner import RunSpec
-from ziggy.errors import ResourceLimitError, ValidationError
+from ziggy.errors import ConfigError, ResourceLimitError, TrustPolicyError, ValidationError
 from ziggy.events import EventLimits
 from ziggy.models.agent import AgentConfig
 from ziggy.models.common import CaptureProfile
@@ -64,6 +97,7 @@ from ziggy.models.result import PolicyProvenance
 from ziggy.models.workflow import StepDef
 from ziggy.policy import (
     GUARDED_POLICY_NAME,
+    SOURCE_USER,
     MediationPolicy,
     PathAmbiguity,
     build_policy_provenance,
@@ -87,11 +121,16 @@ from ziggy.workflows.vars import (
 )
 
 if TYPE_CHECKING:
+    from ziggy.orchestrator.catalog import Catalog
     from ziggy.workflows.runner import PreparedWorkflow
 
 #: EgressRecord.acknowledged_by values (stable strings).
 ACK_BY_FLAG = "flag:--acknowledge-egress"
 ACK_BY_CONFIG = "config"
+
+#: Rule id of the uncontained-planner acknowledgement recorded in the
+#: orchestrator run's policy provenance (REQ-013; stable string).
+RULE_UNCONTAINED_PLANNER_ACK = "uncontained-planner-ack"
 
 
 @dataclass(slots=True)
@@ -100,13 +139,16 @@ class RunOverrides:
 
     ``capture`` and ``timeout_seconds`` are ``None`` when the flag was not
     given (config values apply). ``acknowledge_egress`` is the provider list
-    from ``--acknowledge-egress p1,p2``.
+    from ``--acknowledge-egress p1,p2``. ``plan_only`` is the orchestrator
+    ``--plan-only`` flag (REQ-013): validate and return the plan without
+    launching execution.
     """
 
     no_save: bool = False
     capture: CaptureProfile | None = None
     timeout_seconds: float | None = None
     acknowledge_egress: list[str] | None = None
+    plan_only: bool = False
 
 
 @dataclass(slots=True)
@@ -452,4 +494,248 @@ def prepare_workflow(
         secret_values=secret_values,
         redaction_patterns=redaction_patterns,
         workflow_timeout_seconds=float(config.engine.default_workflow_timeout_seconds),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: orchestration preparation (REQ-013)
+
+
+@dataclass(slots=True)
+class PreparedOrchestration:
+    """Everything ``ziggy.orchestrator.planner.run_orchestration`` needs.
+
+    Built exclusively by :func:`prepare_orchestration` from trusted config +
+    CLI flags. ``planning_env`` is the COMPLETE planning child environment
+    (documented minimal baseline + the planner's explicit trusted-config
+    values; no ``inherit_env`` passthrough). ``meta_prompt`` is the rendered
+    deterministic planning prompt, already proven under
+    ``engine.max_prompt_bytes``. ``base_env`` is the captured parent
+    environment mapping used later to compose EXECUTION step environments
+    (the plan decides the targets, so those envs cannot be composed here).
+
+    ``uncontained`` mirrors the planner's ``direct_tools_assumed``;
+    ``lease_required_before_planning`` is true exactly when the planner is
+    uncontained (spec: the workspace lease must be held from before planner
+    launch through completion). v0.1 reality: both builtins and every custom
+    agent are ``direct_tools_assumed``, so reaching this object at all means
+    the trusted user acknowledged ``orchestrator.allow_uncontained_planner``;
+    the contained branch exists for future capability-matrix updates.
+    """
+
+    resolved: ResolvedConfig
+    registry: AgentRegistry
+    planner_agent: AgentConfig
+    planner_provider: str
+    catalog: Catalog
+    goal: str
+    meta_prompt: str
+    meta_prompt_limits: dict[str, int]
+    workspace: Path
+    plan_only: bool
+    auto_execute: bool
+    uncontained: bool
+    lease_required_before_planning: bool
+    planning_env: dict[str, str]
+    acknowledge_egress: list[str] | None
+    base_env: dict[str, str]
+    capture_profile: CaptureProfile
+    no_save: bool
+    store_root: Path | None
+    logger: MetadataLoggerLike
+    limits: EventLimits
+    config_fingerprint: str
+    policy_provenance: PolicyProvenance
+    secret_values: list[tuple[str, str]]
+    redaction_patterns: list[CustomPattern]
+    step_timeout_seconds: float
+    execution_deadline_seconds: float
+    grace_seconds: float
+    max_prompt_bytes: int
+    lease_manager: LeaseManager = field(default_factory=LeaseManager)
+
+
+def prepare_orchestration(
+    resolved: ResolvedConfig,
+    *,
+    goal: str,
+    workspace: Path,
+    overrides: RunOverrides,
+    base_env: Mapping[str, str] | None = None,
+) -> PreparedOrchestration:
+    """Validate and assemble one orchestration run from config + CLI inputs.
+
+    Raises before any subprocess or filesystem side effect (the only success
+    side effect is opening the metadata logger):
+
+    - ``ConfigError`` (exit 2): ``orchestrator.agent`` unset, planner not
+      registered, catalog eligible-agent incoherence, or a named-but-unset
+      planner ``api_key_env``.
+    - ``TrustPolicyError`` (exit 2): the planner has assumed direct local
+      tools and ``orchestrator.allow_uncontained_planner`` is not set in
+      trusted user config (project scope can never set it).
+    - ``ResourceLimitError``: the composed meta-prompt (goal included)
+      exceeds ``engine.max_prompt_bytes``.
+
+    The planner does NOT need ``orchestration_eligible``: that flag allowlists
+    agents a model-generated plan may invoke as execution targets; the planner
+    itself is chosen directly by trusted user config (``orchestrator.agent``).
+    """
+    # Lazy import: keeps ziggy.engine import-time independent of the
+    # orchestrator package (mirrors the workflows.runner lazy import above).
+    from ziggy.orchestrator.catalog import build_catalog, render_meta_prompt
+
+    env_map: Mapping[str, str] = os.environ if base_env is None else base_env
+    config = resolved.config
+    orch = config.orchestrator
+
+    if not orch.agent:
+        raise ConfigError(
+            "orchestrator.agent is not configured; set orchestrator.agent to a "
+            "trusted user-registered agent name to enable `ziggy orchestrate`",
+            details={"key": "orchestrator.agent"},
+        )
+    registry = AgentRegistry.from_config(resolved)
+    planner = registry.get(orch.agent)  # ConfigError on unknown agent
+
+    uncontained = planner.direct_tools_assumed
+    if uncontained and not orch.allow_uncontained_planner:
+        raise TrustPolicyError(
+            f"planner agent '{planner.name}' is assumed to have direct filesystem/"
+            "shell tools that Ziggy cannot disable or OS-contain; planning is "
+            "refused by default. To accept this advisory boundary, set "
+            "orchestrator.allow_uncontained_planner = true in trusted USER "
+            "config (project config can never set it).",
+            details={
+                "agent": planner.name,
+                "key": "orchestrator.allow_uncontained_planner",
+                "enforcement": "advisory",
+            },
+        )
+
+    catalog = build_catalog(resolved, registry, workspace)  # ConfigError on incoherence
+
+    meta_prompt_limits = {
+        "max_inline_steps": int(orch.max_inline_steps),
+        "max_prompt_bytes": int(config.engine.max_prompt_bytes),
+    }
+    meta_prompt = render_meta_prompt(catalog, goal, meta_prompt_limits)
+    prompt_bytes = len(meta_prompt.encode("utf-8"))
+    if prompt_bytes > config.engine.max_prompt_bytes:
+        raise ResourceLimitError(
+            f"planning meta-prompt is {prompt_bytes} bytes (goal is "
+            f"{len(goal.encode('utf-8'))} bytes); engine.max_prompt_bytes is "
+            f"{config.engine.max_prompt_bytes}",
+            details={
+                "prompt_bytes": prompt_bytes,
+                "goal_bytes": len(goal.encode("utf-8")),
+                "max_prompt_bytes": config.engine.max_prompt_bytes,
+            },
+        )
+
+    # Planning env: minimal baseline + the planner's explicit trusted-config
+    # values only. The stripped copy clears the inherit_env passthrough list;
+    # the literal env table and api_key_env are explicit trusted-user
+    # declarations (not parent-env inheritance) and survive.
+    stripped = planner.model_copy(update={"inherit_env": []})
+    planning_env, secret_values = compose_child_env(stripped, env_map)  # ConfigError pre-launch
+
+    # Redaction seeding must happen now (one Redactor per run), but execution
+    # agents are chosen by the plan later: seed best-effort with every
+    # registered agent's credential value present in the parent env.
+    seen: set[tuple[str, str]] = set(secret_values)
+    for agent in registry.list():
+        if agent.api_key_env:
+            value = env_map.get(agent.api_key_env, "")
+            pair = (f"env:{agent.api_key_env}", value)
+            if value and pair not in seen:
+                seen.add(pair)
+                secret_values.append(pair)
+    for name in config.redaction.extra_value_env_vars:
+        value = env_map.get(name, "")
+        pair = (f"env:{name}", value)
+        if value and pair not in seen:
+            seen.add(pair)
+            secret_values.append(pair)
+    redaction_patterns = [
+        CustomPattern(kind=p.kind, regex=p.regex, max_width=p.max_width)
+        for p in config.redaction.patterns
+    ]
+
+    # CLI flag is direct user intent and may exceed the configured profile.
+    capture = overrides.capture if overrides.capture is not None else config.results.capture
+
+    # Run-level provenance mirrors workflow runs (guarded workspace policy for
+    # the execution stage; the planning step builds its own isolation policy
+    # at run time around the temp dir). The uncontained acknowledgement is
+    # recorded here with advisory enforcement (REQ-013).
+    run_policy = MediationPolicy.guarded(
+        workspace=workspace,
+        step_dir=workspace,
+        profile=config.permissions.profiles.get(config.permissions.default_policy),
+        project_denials=config.permissions.project_denials,
+        profile_name=config.permissions.default_policy,
+    )
+    policy_provenance = build_policy_provenance(run_policy)
+    if uncontained:
+        policy_provenance.rules.append(
+            {
+                "rule_id": RULE_UNCONTAINED_PLANNER_ACK,
+                "effect": "acknowledge",
+                "source": SOURCE_USER,
+                "uncontained_planner_ack": True,
+                "enforcement": "advisory",
+                "agent": planner.name,
+            }
+        )
+
+    ceiling = float(config.engine.default_step_timeout_seconds)
+    if overrides.timeout_seconds is None:
+        step_timeout = ceiling
+    else:
+        step_timeout = min(float(overrides.timeout_seconds), ceiling)
+
+    no_save = overrides.no_save or not config.results.persist
+    store_root = (
+        Path(config.results.store_path).expanduser()
+        if config.results.store_path is not None
+        else None
+    )
+    logger = open_metadata_logger(
+        store_root, no_save=no_save, retention_days=config.logs.retention_days
+    )
+
+    return PreparedOrchestration(
+        resolved=resolved,
+        registry=registry,
+        planner_agent=planner,
+        planner_provider=step_provider(planner),
+        catalog=catalog,
+        goal=goal,
+        meta_prompt=meta_prompt,
+        meta_prompt_limits=meta_prompt_limits,
+        workspace=workspace,
+        plan_only=overrides.plan_only,
+        auto_execute=bool(orch.auto_execute),
+        uncontained=uncontained,
+        lease_required_before_planning=uncontained,
+        planning_env=planning_env,
+        acknowledge_egress=overrides.acknowledge_egress,
+        base_env=dict(env_map),
+        capture_profile=capture,
+        no_save=no_save,
+        store_root=store_root,
+        logger=logger,
+        limits=EventLimits(
+            max_event_bytes_per_step=config.engine.max_event_bytes_per_step,
+            max_artifact_bytes_per_run=config.engine.max_artifact_bytes_per_run,
+        ),
+        config_fingerprint=resolved.fingerprint,
+        policy_provenance=policy_provenance,
+        secret_values=secret_values,
+        redaction_patterns=redaction_patterns,
+        step_timeout_seconds=step_timeout,
+        execution_deadline_seconds=float(config.engine.default_workflow_timeout_seconds),
+        grace_seconds=float(config.engine.cancel_grace_seconds),
+        max_prompt_bytes=int(config.engine.max_prompt_bytes),
     )
