@@ -1,6 +1,6 @@
 site_name: Ziggy
 site_description: Local execution, orchestration, and audit harness for ACP-speaking AI coding agents
-site_url: ""
+site_url: https://sequenzia.github.io/ziggy/
 repo_url: https://github.com/sequenzia/ziggy
 repo_name: sequenzia/ziggy
 
