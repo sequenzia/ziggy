@@ -13,6 +13,7 @@ v0.1.0 (spec §9.7 release gate + §3.2 metrics).
 - [ ] Direct-tool probes per the capability-matrix checklist (fs/terminal mediation vs direct, cancellation latency, file-change visibility, minimal env).
 - [ ] Author the `-m live` contract suite runs: fixed 20-run smoke set per built-in; target ≥95% per agent; failures classified, never excluded.
 - [ ] Re-run the live suite on any SDK/adapter version bump (standing rule).
+- [ ] **Vendor-CLI built-ins (`opencode`, `devin`) — registered by default, zero rows observed.** Install both CLIs, then work capability-matrix checklist step 7: record what each reports at handshake (their only version identity), settle each one's `provider` or leave it `custom:<name>`, and run the same contract/direct-tool/cancellation probes. Until that is done, treat every claim about these two as vendor-doc hearsay, and decide deliberately whether they belong in `DEFAULT_PROBED_AGENTS` and in the v0.1 release gate — spec REQ-002 still scopes v0.1 to two release-gating built-ins.
 
 ## 2. Zed interoperability smoke (spec §3.2, §9.5)
 

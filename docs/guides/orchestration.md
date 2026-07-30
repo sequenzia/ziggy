@@ -112,7 +112,7 @@ A pinned path must canonicalize inside the invocation workspace or the user work
 
 !!! danger "The uncontained-planner gate"
 
-    An agent whose `direct_tools_assumed` is true is one Ziggy assumes has direct filesystem or shell tools it cannot disable. **In v0.1 that is both built-ins and every custom agent.**
+    An agent whose `direct_tools_assumed` is true is one Ziggy assumes has direct filesystem or shell tools it cannot disable. **In v0.1 that is every built-in and every custom agent.**
 
     Using such an agent as the planner is refused by default: `prepare_orchestration` raises `TrustPolicyError` (exit 2) **before any subprocess launches** unless trusted user config sets:
 

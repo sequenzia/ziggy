@@ -9,9 +9,22 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from ziggy.agents import BUILTIN_AGENTS, INSTALL_HINTS, KNOWN_DEGRADATIONS, AgentRegistry
-from ziggy.agents.builtins import CLAUDE_ADAPTER_PIN, CODEX_ADAPTER_PIN
+from ziggy.agents import (
+    BUILTIN_AGENTS,
+    DEFAULT_PROBED_AGENTS,
+    INSTALL_HINTS,
+    KNOWN_DEGRADATIONS,
+    VENDOR_CLI_AGENTS,
+    AgentRegistry,
+)
+from ziggy.agents.builtins import (
+    CLAUDE_ADAPTER_PIN,
+    CODEX_ADAPTER_PIN,
+    OPENCODE_REVIEWED_VERSION,
+)
+from ziggy.config.loader import BUILTIN_AGENT_NAMES
 from ziggy.errors import ConfigError
+from ziggy.workflows.egress import step_provider
 
 
 class FakeAgentEntry(BaseModel):
@@ -66,6 +79,64 @@ class TestBuiltins:
         assert codex.orchestration_eligible is False
         assert codex.direct_tools_assumed is True
 
+    def test_opencode_launches_vendor_cli_acp_subcommand(self) -> None:
+        opencode = BUILTIN_AGENTS["opencode"]
+        assert opencode.name == "opencode"
+        assert opencode.builtin is True
+        # the vendor CLI speaks ACP itself: PATH-resolved, no npm adapter to pin
+        assert opencode.command == "opencode"
+        assert opencode.args == ["acp"]
+        # provider-agnostic, so never labelled with a vendor (see builtins.py)
+        assert opencode.provider == "custom:opencode"
+        assert opencode.api_key_env is None
+        assert opencode.orchestration_eligible is False
+        assert opencode.direct_tools_assumed is True
+
+    def test_devin_launches_vendor_cli_acp_subcommand(self) -> None:
+        devin = BUILTIN_AGENTS["devin"]
+        assert devin.name == "devin"
+        assert devin.builtin is True
+        assert devin.command == "devin"
+        assert devin.args == ["acp"]
+        assert devin.provider == "custom:devin"
+        assert devin.api_key_env is None
+        assert devin.orchestration_eligible is False
+        assert devin.direct_tools_assumed is True
+
+    def test_vendor_cli_builtins_never_launch_through_npx(self) -> None:
+        """No ``npx``, so ``--no-install`` cannot apply; nothing is downloadable."""
+        for name in VENDOR_CLI_AGENTS:
+            agent = BUILTIN_AGENTS[name]
+            assert agent.command != "npx"
+            assert "--no-install" not in agent.args
+            assert not any("@" in arg for arg in agent.args)  # no version pin in args
+
+    def test_vendor_cli_egress_identity_is_recorded_and_consistent(self) -> None:
+        """A declared built-in identity must not diverge from the fallback a
+        workflow step would synthesize for the same agent — one audit identity
+        across the direct-run, workflow, and planner paths."""
+        for name in VENDOR_CLI_AGENTS:
+            agent = BUILTIN_AGENTS[name]
+            assert agent.provider == f"custom:{name}"
+            assert step_provider(agent) == agent.provider
+            assert agent.provider not in {"anthropic", "openai"}  # claims no vendor
+
+    def test_vendor_cli_agents_are_builtins(self) -> None:
+        assert sorted(VENDOR_CLI_AGENTS) == ["devin", "opencode"]
+        assert VENDOR_CLI_AGENTS.issubset(BUILTIN_AGENTS)
+
+    def test_default_probed_agents_excludes_optional_vendor_clis(self) -> None:
+        """A bare ``ziggy doctor`` must not go red over an optional vendor CLI."""
+        assert sorted(DEFAULT_PROBED_AGENTS) == ["claude", "codex"]
+        assert DEFAULT_PROBED_AGENTS.issubset(BUILTIN_AGENTS)
+        assert DEFAULT_PROBED_AGENTS.isdisjoint(VENDOR_CLI_AGENTS)
+
+    def test_builtins_are_conservative_until_live_probes(self) -> None:
+        for agent in BUILTIN_AGENTS.values():
+            assert agent.builtin is True
+            assert agent.direct_tools_assumed is True
+            assert agent.orchestration_eligible is False
+
     def test_known_degradations_empty_until_live_probes(self) -> None:
         assert set(KNOWN_DEGRADATIONS) == set(BUILTIN_AGENTS)
         assert all(entries == [] for entries in KNOWN_DEGRADATIONS.values())
@@ -74,15 +145,22 @@ class TestBuiltins:
         assert set(INSTALL_HINTS) == set(BUILTIN_AGENTS)
         assert INSTALL_HINTS["claude"] == f"npm install -g {CLAUDE_ADAPTER_PIN}"
         assert INSTALL_HINTS["codex"] == f"npm install -g {CODEX_ADAPTER_PIN}"
+        assert (
+            INSTALL_HINTS["opencode"] == f"npm install -g opencode-ai@{OPENCODE_REVIEWED_VERSION}"
+        )
+        assert "cli.devin.ai/install.sh" in INSTALL_HINTS["devin"]
+
+    def test_config_loader_builtin_names_do_not_drift(self) -> None:
+        """Only builtins may omit ``command`` in config — one source of truth."""
+        assert sorted(BUILTIN_AGENT_NAMES) == sorted(BUILTIN_AGENTS)
 
 
 class TestRegistryFromConfig:
     def test_empty_config_yields_builtins(self) -> None:
         registry = AgentRegistry.from_config(resolved())
-        assert registry.names() == ["claude", "codex"]
+        assert registry.names() == ["claude", "codex", "opencode", "devin"]
         assert registry.get("claude").command == "npx"
-        assert registry.is_builtin("claude")
-        assert registry.is_builtin("codex")
+        assert all(registry.is_builtin(name) for name in registry.names())
 
     def test_builtin_partial_override_keeps_unset_fields(self) -> None:
         registry = AgentRegistry.from_config(
@@ -201,7 +279,13 @@ class TestRegistryLookup:
         assert "claude" in message
         assert "codex" in message
         assert "helper" in message
-        assert exc_info.value.details["registered"] == ["claude", "codex", "helper"]
+        assert exc_info.value.details["registered"] == [
+            "claude",
+            "codex",
+            "opencode",
+            "devin",
+            "helper",
+        ]
         assert exc_info.value.exit_code == 2
 
     def test_list_ordered_builtins_then_customs_alphabetical(self) -> None:
@@ -213,4 +297,11 @@ class TestRegistryLookup:
                 }
             )
         )
-        assert [cfg.name for cfg in registry.list()] == ["claude", "codex", "alpha", "zeta"]
+        assert [cfg.name for cfg in registry.list()] == [
+            "claude",
+            "codex",
+            "opencode",
+            "devin",
+            "alpha",
+            "zeta",
+        ]

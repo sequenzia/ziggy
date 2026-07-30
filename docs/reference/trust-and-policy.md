@@ -6,7 +6,7 @@
 
     Every rule, allowlist, and deny glob documented here applies **only to requests the agent routes through ACP**. They produce a recorded, reviewable decision trail. They do not confine the process. Treat a Ziggy policy decision as *evidence about what was asked and answered*, never as proof of what the agent could do.
 
-    In v0.1 both built-in agents are **assumed** to have direct filesystem and shell tools (live capability probes are deferred), so `ziggy doctor` reports their mediation as `advisory`.
+    In v0.1 every built-in agent is **assumed** to have direct filesystem and shell tools (live capability probes are deferred), so `ziggy doctor` reports their mediation as `advisory`.
 
 The vocabulary on this page is normative for code, docs, CLI output, and `RunResult` payloads. It comes from [`../phase0/trust-boundary.md`](../phase0/trust-boundary.md); where this page and the source disagree, the source and the code win.
 
@@ -51,7 +51,7 @@ flowchart LR
     style NET fill:#fee2e2,stroke:#dc2626,color:#000
 ```
 
-The solid path is governed and recorded. The dotted paths are not — and in v0.1 both built-ins are assumed to use them.
+The solid path is governed and recorded. The dotted paths are not — and in v0.1 every built-in is assumed to use them.
 
 ### The mediated surface
 
@@ -400,7 +400,7 @@ token = ["anthropic"]
 
 ## The uncontained-planner gate
 
-An agent whose `AgentConfig.direct_tools_assumed` is true is one Ziggy assumes has direct filesystem or shell tools it cannot disable. In v0.1 that is **both built-ins and every custom agent**.
+An agent whose `AgentConfig.direct_tools_assumed` is true is one Ziggy assumes has direct filesystem or shell tools it cannot disable. In v0.1 that is **every built-in and every custom agent**.
 
 Using such an agent as the orchestrator's planner is **refused by default**. `prepare_orchestration` raises `TrustPolicyError` (exit code 2) unless trusted **user** config sets:
 
@@ -439,7 +439,7 @@ Capture completeness in those records comes from provenance rules, never from op
 
 Nothing on this page is a permanent verdict about the built-in agents — it is the **conservative default** that follows from evidence Ziggy does not yet have.
 
-The direct-tool rows in [../phase0/capability-matrix.md](../phase0/capability-matrix.md) are `UNVERIFIED (live probe deferred)`, so both built-ins are classified `direct_tools_assumed = true`. The probe that would change it is specified there: run each adapter against a canary workspace with the client `fs`/`terminal` capabilities disabled and observe whether edits and commands still happen (direct tools present) or the agent degrades to the mediated path.
+The direct-tool rows in [../phase0/capability-matrix.md](../phase0/capability-matrix.md) are `UNVERIFIED (live probe deferred)`, so every built-in is classified `direct_tools_assumed = true`. The probe that would change it is specified there: run each adapter against a canary workspace with the client `fs`/`terminal` capabilities disabled and observe whether edits and commands still happen (direct tools present) or the agent degrades to the mediated path.
 
 If a built-in proves to route its filesystem and shell work through ACP, its `direct_tools_assumed` flag flips, `ziggy doctor` stops warning about it, and the uncontained-planner gate stops requiring an acknowledgement for it. The contained branch in the orchestrator already exists for exactly that update.
 

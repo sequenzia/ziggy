@@ -170,11 +170,15 @@ class PreparedRun:
 
 
 def _egress_acknowledgement(
-    config: ZiggyConfig, provider: str | None, flag_providers: list[str] | None
+    config: ZiggyConfig, provider: str, flag_providers: list[str] | None
 ) -> str | None:
-    """How the agent provider's egress was acknowledged, if at all."""
-    if provider is None:
-        return None
+    """How the agent provider's egress was acknowledged, if at all.
+
+    ``provider`` is the resolved egress identity from
+    :func:`ziggy.workflows.egress.step_provider` — never a bare ``None`` — so an
+    unlabelled agent is matched by its ``custom:<name>`` identity rather than
+    silently counting as unacknowledgeable.
+    """
     if flag_providers and provider in flag_providers:
         return ACK_BY_FLAG
     if any(provider in provider_set for provider_set in config.egress.acknowledged_provider_sets):
@@ -258,6 +262,11 @@ def prepare_run(
         store_root, no_save=no_save, retention_days=config.logs.retention_days
     )
 
+    # Same resolution as every other path (workflow steps, planner): an agent
+    # without a declared provider still has an egress identity, so a direct run
+    # records one instead of dropping it.
+    provider = step_provider(agent_config)
+
     spec = RunSpec(
         agent_name=agent_name,
         command=agent_config.command,
@@ -269,7 +278,7 @@ def prepare_run(
         no_save=no_save,
         step_timeout_seconds=timeout,
         cancel_grace_seconds=float(config.engine.cancel_grace_seconds),
-        provider=agent_config.provider,
+        provider=provider,
         limits=EventLimits(
             max_event_bytes_per_step=config.engine.max_event_bytes_per_step,
             max_artifact_bytes_per_run=config.engine.max_artifact_bytes_per_run,
@@ -282,7 +291,7 @@ def prepare_run(
         logger=logger,
         config_fingerprint=resolved.fingerprint,
         egress_acknowledged_by=_egress_acknowledgement(
-            config, agent_config.provider, overrides.acknowledge_egress
+            config, provider, overrides.acknowledge_egress
         ),
     )
     return PreparedRun(

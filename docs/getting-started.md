@@ -13,8 +13,8 @@ Budget about fifteen minutes, most of it waiting on `npm`.
     subprocess — that subprocess is a normal OS process and can open files,
     spawn shells, and reach the network without Ziggy ever seeing it. Treat a
     policy decision as *evidence about what was asked and answered*, never as
-    proof of what the agent could do. The full boundary — including why both
-    v0.1 built-ins are classified as advisory — is in
+    proof of what the agent could do. The full boundary — including why every
+    v0.1 built-in is classified as advisory — is in
     [Trust and policy](reference/trust-and-policy.md).
 
 ```mermaid
@@ -41,7 +41,7 @@ flowchart LR
 | --- | --- |
 | **Python `>=3.12,<3.15`** | The package pins this range in `pyproject.toml`; nothing older or newer is supported in v0.1 |
 | **macOS or Linux** | The process lifecycle relies on POSIX process groups and signals. Windows is not supported in v0.1 |
-| **Node.js with `npx` on `PATH`** | Both built-in agents are Node adapters launched through `npx` |
+| **Node.js with `npx` on `PATH`** | The `claude` and `codex` built-ins are Node adapters launched through `npx` (the `opencode`/`devin` built-ins run their own CLI instead) |
 | **[uv](https://docs.astral.sh/uv/)** (recommended) | The install command below uses `uv tool install`; it is also how you develop on Ziggy |
 
 `PATH` matters more than usual here: Ziggy composes the agent's child
@@ -86,23 +86,49 @@ This is a **separate, deliberate step**. Ziggy will not do it for you:
 npm install -g claude-agent-acp@0.63.0 codex-acp@1.1.7
 ```
 
-The two built-in agents launch as `npx --no-install <pinned-package>`. That
+`claude` and `codex` launch as `npx --no-install <pinned-package>`. That
 `--no-install` is load-bearing: `npx` will use the package if it is already
 installed and **fail otherwise**, rather than silently fetching and executing
 code from the network in the middle of a run. A missing adapter therefore
-surfaces as an `AgentLaunchError` carrying the exact install command, at a
-moment you chose, instead of an invisible download you did not.
+surfaces as an `AgentLaunchError` at a moment you chose, instead of an invisible
+download you did not. The error names the command and points at `ziggy doctor`,
+which prints the exact install line for that agent.
 
-| Agent | Launch command | Provider | Credential |
+Two more built-ins — `opencode` and `devin` — are registered by default but
+speak ACP from their own CLI, so they have no adapter to install. Install the
+CLI only if you intend to use it:
+
+```bash
+npm install -g opencode-ai@1.18.9              # or the install script / Homebrew
+brew install --cask devin-cli                  # Linux: curl -fsSL https://cli.devin.ai/install.sh | bash
+```
+
+| Agent | Launch command | Provider (egress identity) | Credential |
 | --- | --- | --- | --- |
 | `claude` | `npx --no-install claude-agent-acp@0.63.0` | `anthropic` | adapter-managed login state under `HOME` (`api_key_env` is unset by default) |
 | `codex` | `npx --no-install codex-acp@1.1.7` | `openai` | ChatGPT login state under `HOME` |
+| `opencode` | `opencode acp` (found on `PATH`) | `custom:opencode` | `opencode auth login` state under `HOME`, or the configured provider's own env vars |
+| `devin` | `devin acp` (found on `PATH`) | `custom:devin` | browser login to a Devin Cloud account |
 
-The versions are exact reviewed pins, never `latest`. You authenticate each
-adapter the way its own documentation describes — Ziggy forwards `HOME`, which
-is where that login state lives. If you prefer an API key instead, name the
-environment **variable** (never the value) with `api_key_env`; see
-[Registering agents](reference/configuration.md#registering-agents).
+The adapter versions are exact reviewed pins, never `latest`. The two vendor
+CLIs cannot be version-pinned at launch — Ziggy runs whatever `opencode` /
+`devin` resolves to on `PATH` and records the version the agent reports during
+the handshake. Nothing is downloaded either way: a CLI that is not installed
+fails the launch with `command not found`, and `ziggy doctor --agent <name>`
+prints the install line.
+
+`opencode` and `devin` carry the egress identities `custom:opencode` and
+`custom:devin` on purpose. OpenCode routes to whichever model provider you
+configured, so calling it `anthropic` or `openai` would misstate where your code
+goes, and the same caution applies to Devin here. A distinct `custom:` identity
+is never conflated with another agent's, and it means a workflow mixing `claude`
+and `opencode` counts as cross-provider and must be acknowledged
+(`--acknowledge-egress anthropic,custom:opencode`).
+
+You authenticate each agent the way its own documentation describes — Ziggy
+forwards `HOME`, which is where that login state lives. If you prefer an API key
+instead, name the environment **variable** (never the value) with `api_key_env`;
+see [Registering agents](reference/configuration.md#registering-agents).
 
 ## 3. Verify with `ziggy doctor`
 
@@ -119,10 +145,16 @@ ziggy doctor
     fastest way to learn that an adapter is missing, unauthenticated, or
     speaking a protocol version Ziggy does not.
 
-    It still never downloads anything: built-in commands stay behind
-    `npx --no-install`, and command resolvability is probed with `which` alone.
-    `api_key_env` is checked for **presence only** — the value is never read
-    into a message or printed.
+    It still never downloads anything: the npm-adapter built-ins stay behind
+    `npx --no-install`, the vendor-CLI built-ins run an already-installed binary,
+    and command resolvability is probed with `which` alone. `api_key_env` is
+    checked for **presence only** — the value is never read into a message or
+    printed.
+
+    A bare `ziggy doctor` probes `claude` and `codex`. `opencode` and `devin`
+    are optional installs, so they are left out of the default scope rather than
+    failing the run on a machine that never wanted them — probe them explicitly
+    with `ziggy doctor --agent opencode` or `--all`.
 
 A healthy machine looks like this:
 
@@ -145,7 +177,7 @@ A healthy machine looks like this:
        hint: run the agent in a separately verified OS sandbox for hard enforcement
 [skip] orchestrator-planning-eligibility: no orchestrator agent configured
 [skip] trusted-workflow-hashes: no trusted workflows configured
-[pass] server-readiness: 2 agent routes; max_active_runs=1; lease directory writable; permission forwarding per current adapter fixture
+[pass] server-readiness: 4 agent routes; max_active_runs=1; lease directory writable; permission forwarding per current adapter fixture
 doctor: ok
 ```
 
@@ -169,7 +201,7 @@ config-dependent check is reported `skip` rather than guessed at.
 
 ### The `direct-tools-advisory` warning is expected
 
-Both built-ins warn here, on every healthy machine, in v0.1. This is **not** a
+Every built-in warns here, on every healthy machine, in v0.1. This is **not** a
 misconfiguration and there is no setting that clears it.
 
 Ziggy classifies an agent with `direct_tools_assumed = true` when it assumes the
@@ -185,18 +217,21 @@ because Ziggy does not provide one. See
 ### Scope, and what to do about failures
 
 ```bash
-ziggy doctor                  # v0.1 builtins only (the default)
-ziggy doctor --all            # every registered agent, including custom ones
-ziggy doctor --agent claude   # exactly one agent
+ziggy doctor                    # claude + codex (the default)
+ziggy doctor --all              # every registered agent: both vendor CLIs and custom ones
+ziggy doctor --agent claude     # exactly one agent
+ziggy doctor --agent opencode   # how you probe a vendor-CLI builtin
 ziggy doctor --json | jq '.checks[] | select(.status == "fail")'
 ```
 
 `--agent` takes precedence over `--all` when both are given, and an unknown
-agent name is a usage error (exit 2), not a check failure.
+agent name is a usage error (exit 2), not a check failure. Expect
+`--all` to fail on any vendor CLI you have not installed — that is the whole
+reason the default scope leaves them out.
 
 | First-run failure | What it means | Fix |
 | --- | --- | --- |
-| `agent-command-resolvable:*` fails | `npx` is not on `PATH` for this shell | Install Node.js, or fix `PATH` |
+| `agent-command-resolvable:*` fails | The launch command is not on `PATH` for this shell — `npx` for `claude`/`codex`, the vendor binary for `opencode`/`devin` | Install Node.js (or the vendor CLI), or fix `PATH` |
 | `acp-handshake:*` fails with an install hint | The pinned adapter package is not installed — `--no-install` refused to fetch it | `npm install -g claude-agent-acp@0.63.0 codex-acp@1.1.7` |
 | `acp-handshake:*` times out after 20s | The adapter launched but never completed `initialize` — usually an unauthenticated or wedged adapter | Complete the adapter's own login, then re-probe with `ziggy doctor --agent <name>` |
 | `api-key-env-set:*` fails | Config names an `api_key_env` variable that is unset or empty | `export` it in the shell that runs Ziggy, or correct the name in user config |

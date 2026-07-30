@@ -317,6 +317,32 @@ class TestEgressAcknowledgement:
         prepared = prepare(tmp_path, self.PROVIDER_TOML, overrides=RunOverrides(no_save=True))
         assert prepared.spec.egress_acknowledged_by is None
 
+    def test_unlabelled_agent_gets_the_custom_fallback_identity(self, tmp_path: Path) -> None:
+        """An agent with no declared provider still has an egress identity on the
+        direct-run path — the same ``custom:<name>`` a workflow step would use.
+        Without this, the run's own RunResult recorded no EgressRecord at all."""
+        toml = '[agents.mock]\ncommand = "/usr/bin/true"\n'
+        prepared = prepare(tmp_path, toml, overrides=RunOverrides(no_save=True))
+        assert prepared.spec.provider == "custom:mock"
+        assert prepared.spec.egress_acknowledged_by is None
+
+    def test_unlabelled_agent_identity_is_acknowledgeable(self, tmp_path: Path) -> None:
+        """The fallback identity is the string the user acknowledges, by flag or
+        config — it is a real identity, not a placeholder."""
+        toml = (
+            '[agents.mock]\ncommand = "/usr/bin/true"\n\n'
+            '[egress]\nacknowledged_provider_sets = [["custom:mock"]]\n'
+        )
+        by_config = prepare(tmp_path, toml, overrides=RunOverrides(no_save=True))
+        assert by_config.spec.egress_acknowledged_by == ACK_BY_CONFIG
+
+        by_flag = prepare(
+            tmp_path,
+            '[agents.mock]\ncommand = "/usr/bin/true"\n',
+            overrides=RunOverrides(no_save=True, acknowledge_egress=["custom:mock"]),
+        )
+        assert by_flag.spec.egress_acknowledged_by == ACK_BY_FLAG
+
 
 # ---------------------------------------------------------------------- FIX #21
 # execute_step must never disarm its finally-teardown before the cancel ladder

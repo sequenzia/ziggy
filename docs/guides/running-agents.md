@@ -26,7 +26,8 @@ You need Ziggy installed, a pinned adapter installed, and a workspace to work in
 environment is sane:
 
 ```bash
-ziggy doctor --all
+ziggy doctor                 # claude + codex
+ziggy doctor --agent devin   # or whichever agent you are about to run
 ```
 
 Ziggy always acts on the directory you invoke it from — there is no `--workspace` flag.
@@ -152,6 +153,11 @@ Two properties are worth internalizing before the details:
     as `acknowledged_by`. The fail-closed egress *preflight* belongs to
     [workflows](workflows.md) and [orchestration](orchestration.md), where step outputs can
     cross provider boundaries.
+
+    **Every run records one**, including an agent with no declared `provider`: the
+    identity falls back to `custom:<agent-name>`, the same string a workflow step
+    would use, and it is the string you acknowledge by flag or config. An agent
+    that never declares a provider is still attributable in its own manifest.
 
 ### 2. The child environment
 
@@ -332,7 +338,7 @@ interrupted, so no artifact class may claim better), and the CLI exits **1**.
 !!! note "What the deadline actually covers"
     The clock starts when the prompt is sent, so it bounds the *turn* — not process launch,
     the ACP handshake, or session creation. An adapter that hangs during `initialize` is not
-    covered by `--timeout` in v0.1; `Ctrl-C` is your out, and `ziggy doctor --all` (which
+    covered by `--timeout` in v0.1; `Ctrl-C` is your out, and `ziggy doctor --agent <name>` (which
     does apply a handshake timeout) is the way to catch a broken adapter before you rely on
     it.
 
@@ -445,15 +451,18 @@ Two rules decide the code:
 
 ## When things go wrong
 
-Start with `ziggy doctor --all`. It checks config load, store permissions, index health,
+Start with `ziggy doctor` (add `--agent opencode` / `--agent devin` for a vendor-CLI
+builtin, which the default scope skips). It checks config load, store permissions, index health,
 command resolvability, credential presence, and per-agent handshakes, and prints a fix hint
 for every failure. Most of the table below is something doctor would have told you first.
 
 | Symptom | What it means | Fix |
 | --- | --- | --- |
-| `error [ConfigError]: unknown agent 'clade'; registered agents: claude, codex` | The name is not in the registry built from trusted user config | Check the spelling against `ziggy agents list`; register custom agents under `[agents.<name>]` in **user** config (project scope can never name a command) |
+| `error [ConfigError]: unknown agent 'clade'; registered agents: claude, codex, opencode, devin` | The name is not in the registry built from trusted user config | Check the spelling against `ziggy agents list`; register custom agents under `[agents.<name>]` in **user** config (project scope can never name a command) |
 | `error [AgentLaunchError]: Failed to launch agent: command not found: 'npx'` | The launch command is not on `PATH` in the composed child environment — remember `PATH` is forwarded from the parent, not synthesized | Ensure `npx` (or your adapter's command) resolves in the shell that runs Ziggy |
-| Launch fails even though `npx` exists | Builtins launch with `npx --no-install`, which **never downloads** the adapter at run time. Installs are deliberate in Ziggy | `npm install -g claude-agent-acp@0.63.0` or `npm install -g codex-acp@1.1.7` — the exact reviewed pins |
+| Launch fails even though `npx` exists | `claude`/`codex` launch with `npx --no-install`, which **never downloads** the adapter at run time. Installs are deliberate in Ziggy | `npm install -g claude-agent-acp@0.63.0` or `npm install -g codex-acp@1.1.7` — the exact reviewed pins |
+| `command not found: 'opencode'` / `'devin'` | These builtins run the vendor CLI's own `acp` subcommand, resolved on `PATH`. Ziggy never downloads it either | `npm install -g opencode-ai@1.18.9`, or `brew install --cask devin-cli` (Linux: `curl -fsSL https://cli.devin.ai/install.sh \| bash`) |
+| An `opencode`/`devin` run behaves unlike the version you expected | Vendor-CLI builtins carry **no launch-time version pin** — Ziggy runs whatever is on `PATH` | Check the version the agent reported at handshake (`ziggy doctor --agent <name>`, or the manifest of a persisted run) |
 | `error [AgentLaunchError]: ... is not executable` | The command resolved but cannot be executed | Check file permissions and format; reinstall the adapter |
 | `error [ConfigError]: Agent 'x' requires env var Y (not set).` | `api_key_env` names a variable that is unset or empty in the parent environment | `export Y=...` in the environment that runs Ziggy, or correct `api_key_env` in user config. Note the builtins use `api_key_env = None` and authenticate through adapter-managed login state under `HOME` |
 | `error [WorkspaceBusyError]: workspace ... is busy (held by run ...)` | Another Ziggy run holds the single-mutator lease on this workspace, or the holder's liveness could not be proven | Wait for the other run, or find it with `ziggy runs list`. Ambiguous cases (unreadable lease, `EPERM` probe, a live pid whose start marker changed) deliberately stay busy rather than risk concurrent mutation |

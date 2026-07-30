@@ -220,6 +220,8 @@ class TestHandshakeAndSessions:
             "orchestrator",
             "agent:claude",
             "agent:codex",
+            "agent:opencode",
+            "agent:devin",
             "agent:mock-broken",
             "agent:mock-hello",
             "agent:mock-perm",

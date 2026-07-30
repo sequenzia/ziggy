@@ -376,16 +376,17 @@ Environment diagnostics with per-check pass/fail and fix hints.
 | --- | --- | --- | --- |
 | `--json` | flag | off | Emit check results as JSON |
 | `--agent` | string | unset | Probe a single registered agent |
-| `--all` | flag | off | Include custom agents (default: builtins only) |
+| `--all` | flag | off | Probe every registered agent, including the vendor-CLI builtins and custom agents |
 
 ```bash
 ziggy doctor
 ziggy doctor --all
 ziggy doctor --agent claude
+ziggy doctor --agent opencode
 ziggy doctor --json | jq '.checks[] | select(.status == "fail")'
 ```
 
-The default agent scope is the v0.1 builtins. `--all` widens it to every registered agent, and `--agent NAME` narrows it to one. **`--agent` takes precedence over `--all`** when both are given. An unknown `--agent` name is a usage error (`ConfigError`, exit 2) rather than a check failure.
+The default agent scope is `claude` and `codex` — the builtins whose pinned adapters the install docs require. The vendor-CLI builtins (`opencode`, `devin`) are optional installs, so probing them by default would fail the whole run (exit 1) on machines that never wanted them; reach them with `--agent opencode`, `--agent devin`, or `--all`. `--all` widens the scope to every registered agent, and `--agent NAME` narrows it to one. **`--agent` takes precedence over `--all`** when both are given. An unknown `--agent` name is a usage error (`ConfigError`, exit 2) rather than a check failure.
 
 Checks run in this order — global, then one block per selected agent, then the remaining globals:
 
@@ -409,7 +410,7 @@ Statuses are `pass`, `fail`, `warn`, and `skip`. **Only `fail` affects the exit 
 Human output prints one line per check, with a `hint:` line for `fail` and `warn`, ending in `doctor: ok` or `doctor: problems found`. JSON output is `{"ok": bool, "checks": [{name, status, detail, hint}]}`.
 
 !!! note "`direct-tools-advisory` is expected to warn"
-    Both v0.1 builtins are assumed to have direct filesystem and shell tools, so this check warns that ACP mediation for them is **advisory** — Ziggy observes and records the ACP client-bound surface, and an agent subprocess is a normal OS process that can act outside it. The hint points to running the agent under a separately verified OS sandbox if you need hard enforcement. See [Trust and policy](trust-and-policy.md).
+    Every builtin is assumed to have direct filesystem and shell tools, so this check warns that ACP mediation for them is **advisory** — Ziggy observes and records the ACP client-bound surface, and an agent subprocess is a normal OS process that can act outside it. The hint points to running the agent under a separately verified OS sandbox if you need hard enforcement. See [Trust and policy](trust-and-policy.md).
 
 Two guarantees hold regardless of scope: `api_key_env` is checked for *presence* only — the value is never read into a message or printed — and the handshake probe never downloads anything (builtin commands stay behind `npx --no-install`, and resolvability is probed with `which` alone). The probe denies every mediated request it might receive and allows 20 seconds for one `initialize` round-trip.
 

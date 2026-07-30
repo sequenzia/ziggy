@@ -3,8 +3,8 @@
 Local execution, orchestration, and audit harness for AI coding agents that
 speak the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
 
-Ziggy gives Claude, Codex, and trusted custom agents one headless command
-surface, emits a coherent schema-versioned `RunResult` for every invocation,
+Ziggy gives Claude, Codex, OpenCode, Devin, and trusted custom agents one
+headless command surface, emits a coherent schema-versioned `RunResult` for every invocation,
 runs constrained agent-only YAML workflows serially, exposes itself as an ACP
 agent for editors like Zed, and can plan bounded agent-only execution graphs
 from a goal. It is an **audit and trust-boundary layer, not an OS sandbox** —
@@ -19,6 +19,10 @@ See `specs/ziggy-mvp-SPEC.md` for the full product/technical spec.
 uv tool install git+<repo-url>@v0.1.0        # once released
 # then install the pinned agent adapters explicitly (Ziggy never auto-downloads):
 npm install -g claude-agent-acp@0.63.0 codex-acp@1.1.7
+# opencode and devin are built in too, but speak ACP from their own CLI —
+# install either one only if you use it (nothing is ever auto-downloaded):
+npm install -g opencode-ai@1.18.9
+brew install --cask devin-cli   # Linux: curl -fsSL https://cli.devin.ai/install.sh | bash
 ```
 
 Requires Python 3.12+, macOS or Linux. Development: `uv sync`, then
