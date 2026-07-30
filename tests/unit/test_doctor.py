@@ -20,7 +20,10 @@ if str(_REPO_ROOT) not in sys.path:
 
 from tests.mocks import RAW_AGENT_PATH, scenarios  # noqa: E402
 
+from ziggy.agents import BUILTIN_AGENTS, AgentRegistry  # noqa: E402
+from ziggy.cli.doctor import _select_agents  # noqa: E402
 from ziggy.cli.main import app  # noqa: E402
+from ziggy.models.agent import AgentConfig  # noqa: E402
 
 runner = CliRunner()
 
@@ -118,6 +121,30 @@ def test_doctor_api_key_present_never_prints_value(
     assert by_name["api-key-env-set:keyed"]["status"] == "pass"
     assert secret_value not in result.stdout
     assert secret_value not in result.stderr
+
+
+class TestAgentScope:
+    """Scope selection is unit-tested directly: it decides which agents get
+    launched, so exercising it must not launch any."""
+
+    @staticmethod
+    def _registry() -> AgentRegistry:
+        custom = AgentConfig(name="helper", command="/bin/helper")
+        return AgentRegistry({**BUILTIN_AGENTS, "helper": custom})
+
+    def test_default_scope_skips_optional_vendor_clis(self) -> None:
+        """Not everyone installs the OpenCode/Devin CLIs; a bare doctor run must
+        not fail (exit 1) just because an optional vendor CLI is absent."""
+        selected = _select_agents(self._registry(), agent=None, all_agents=False)
+        assert selected == ["claude", "codex"]
+
+    def test_all_widens_to_vendor_clis_and_customs(self) -> None:
+        selected = _select_agents(self._registry(), agent=None, all_agents=True)
+        assert selected == ["claude", "codex", "opencode", "devin", "helper"]
+
+    @pytest.mark.parametrize("name", ["opencode", "devin"])
+    def test_vendor_cli_builtins_are_probeable_by_name(self, name: str) -> None:
+        assert _select_agents(self._registry(), agent=name, all_agents=False) == [name]
 
 
 def test_doctor_unknown_agent_exit_2(cli_home: tuple[Path, Path]) -> None:

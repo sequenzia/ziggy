@@ -12,7 +12,7 @@
 
 **Spec Depth**: Full technical documentation
 
-**Description**: Ziggy v0.1 is a local Python execution, orchestration, and audit harness for ACP-speaking AI coding agents. It provides a single headless CLI for Claude, Codex, and explicitly registered custom agents; emits structured, redacted, capability-aware RunResults; runs constrained agent-only dependency graphs serially; exposes itself as an ACP agent to clients such as Zed; and uses a registered orchestrator to select an agent, a trusted named workflow, or a bounded inline agent-only workflow. Script steps, mutating retries, and parallel writers remain post-MVP.
+**Description**: Ziggy v0.1 is a local Python execution, orchestration, and audit harness for ACP-speaking AI coding agents. It provides a single headless CLI for Claude, Codex, OpenCode, Devin, and explicitly registered custom agents; emits structured, redacted, capability-aware RunResults; runs constrained agent-only dependency graphs serially; exposes itself as an ACP agent to clients such as Zed; and uses a registered orchestrator to select an agent, a trusted named workflow, or a bounded inline agent-only workflow. Script steps, mutating retries, and parallel writers remain post-MVP.
 
 ---
 
@@ -52,7 +52,7 @@ Ziggy converts repeatable agent usage from individual craft into team infrastruc
 
 ### 3.1 Primary Goals
 
-1. **Reliable headless launcher** — Ziggy is the preferred way the team launches repeatable, one-shot Claude and Codex runs.
+1. **Reliable headless launcher** — Ziggy is the preferred way the team launches repeatable, one-shot runs of any built-in agent.
 2. **Coherent audit artifacts** — Every invocation produces one schema-versioned result manifest and one canonical event stream, with explicit capture-completeness and redaction metadata.
 3. **Constrained workflows** — Agent-only YAML dependency graphs validate before execution, run serially and deterministically, and preserve partial results with unambiguous terminal states.
 4. **Works in ACP clients** — Zed and other ACP clients can drive direct-agent, named-workflow, and orchestrated runs with streamed progress, permission forwarding, cancellation, and identical RunResults.
@@ -162,14 +162,17 @@ User runs `ziggy workflow run review-and-fix`. The engine resolves the YAML, val
 **REQ-002: Built-in agents**
 
 **Acceptance Criteria**:
-- [ ] Two built-in agents are supported in v0.1: Claude (`claude-agent-acp`) and Codex (`codex-acp`). OpenCode and Devin remain compatibility targets but are not release-gating built-ins until their live contract suites pass.
-- [ ] Built-in launch commands are pinned to known-good adapter versions; trusted user config can override command, args, and explicit environment.
-- [ ] Built-ins are installed deliberately; Ziggy does not silently download or execute an unpinned package during a run or diagnostic command. Package identity and integrity metadata are recorded where the distribution supports it.
+- [ ] Four built-in agents are registered by default in v0.1, in two launch shapes: Claude (`claude-agent-acp`) and Codex (`codex-acp`) launch a pinned npm adapter through `npx --no-install`, while OpenCode (`opencode acp`) and Devin (`devin acp`) launch the vendor CLI's own ACP subcommand, resolved on `PATH`. None of the four requires user config to be usable.
+- [ ] Claude and Codex are the only **release-gating** built-ins. OpenCode and Devin ship registered but unqualified: every capability-matrix row for them is UNVERIFIED, they carry no `KNOWN_DEGRADATIONS` entries derived from vendor documentation, and they are excluded from a bare `ziggy doctor`'s probe scope because their vendor CLI is an optional install that must not fail a diagnostic run on a machine that never wanted it.
+- [ ] Built-in launch commands are pinned to known-good adapter versions **where the distribution supports pinning**; trusted user config can override command, args, and explicit environment. A vendor-CLI built-in carries no launch-time version pin: its version identity is the handshake-reported `agentInfo.version`, recorded per run and never assumed from a reviewed-version constant.
+- [ ] Built-ins are installed deliberately; Ziggy does not silently download or execute an unpinned package during a run or diagnostic command. `npx --no-install` refuses to fetch an absent adapter, a vendor CLI is only ever resolved on `PATH`, and package identity and integrity metadata are recorded where the distribution supports it.
 - [ ] Custom agents are registered only in trusted user config with `command`, plus optional `args`, explicitly inherited environment variable names, `working_dir`, and `api_key_env`.
 
 **Technical Notes**:
 - Built-in launch commands are hardcoded at reviewed versions and verified against the machine-readable ACP registry (`https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json`) in CI. The mutable registry is metadata, not a runtime trust root.
-- Per-agent quirks (Devin degraded terminal rendering, OpenCode missing undo/redo over ACP, claude-agent-acp adapter churn) are isolated in per-agent capability records, not special-cased across the engine.
+- A package name that merely resembles a vendor adapter is not a trust root either: `opencode-acp` on npm is an unrelated third-party package and `devin` on npm is an unrelated personal package. Vendor-CLI built-ins therefore launch the vendor's own binary, never a name-matched npm package.
+- A built-in with no single model provider declares a distinct `custom:<name>` egress identity rather than a vendor label it cannot honestly claim: OpenCode routes to whichever provider the user configured, and the Devin CLI's routing is unverified. It is declared rather than left to the fallback because the string is an interface — persisted in RunResults and named in user acknowledgements — see REQ-011.
+- Per-agent quirks (Devin degraded terminal rendering, OpenCode missing undo/redo over ACP, claude-agent-acp adapter churn) are isolated in per-agent capability records, not special-cased across the engine. For the two unqualified built-ins these remain vendor-documentation claims, recorded as UNVERIFIED matrix rows until a live probe observes them.
 
 **Edge Cases**:
 | Scenario | Input | Expected Behavior |
@@ -452,6 +455,7 @@ steps:
 - [ ] Defaults: at most 16 steps, 256 KiB composed prompt per step, 10 MiB events per step before truncation/metadata-only continuation, 50 MiB artifacts per run, 30-minute step timeout, and 60-minute workflow timeout.
 - [ ] Limit violations fail before execution where statically knowable and otherwise produce `ResourceLimitError` with explicit truncation/capture metadata.
 - [ ] The RunResult records each step's agent/provider identity and which upstream outputs were sent to it. When a workflow crosses providers, the CLI displays an egress notice before execution unless trusted user config has acknowledged that exact provider set.
+- [ ] Provider identity is never absent from a recorded run. An agent that declares no `provider` is attributed by the `custom:<agent-name>` fallback, identically on the direct-run, workflow-step, and planner paths, and that fallback string is itself acknowledgeable by config or `--acknowledge-egress`.
 - [ ] In headless mode an unacknowledged provider crossing fails before launch. A user may acknowledge the exact provider set via trusted config or explicit `--acknowledge-egress`; the acknowledgement and input lineage are recorded.
 - [ ] Variables marked `secret` are redacted from artifacts and are not interpolated into an agent prompt unless trusted user config explicitly allows that variable for the destination provider. Secret classification does not imply the provider cannot receive or retain an explicitly allowed value.
 - [ ] Configurable sensitive-path rules exclude files such as `.env` and credential material from Ziggy-mediated reads. This is defense in depth and does not claim to constrain an agent with direct local tools.
@@ -896,7 +900,8 @@ sequenceDiagram
 | claude-agent-acp (npm) | Agent subprocess | ACP v1 / stdio | Claude Code runs | `ANTHROPIC_API_KEY` (or adapter auth flow) |
 | codex-acp (npm) | Agent subprocess | ACP v1 / stdio | Codex runs | ChatGPT login / `OPENAI_API_KEY` |
 | trusted custom agents | Agent subprocess | ACP v1 / stdio | User-managed extension point | User-declared env reference or agent-managed login |
-| OpenCode / Devin | Deferred compatibility targets | ACP v1 / stdio | Post-MVP built-ins after live contract qualification | Provider-specific |
+| OpenCode CLI (`opencode acp`) | Agent subprocess | ACP v1 / stdio | OpenCode runs; registered built-in, live contract qualification deferred | `opencode auth login` state or the configured provider's own env vars |
+| Devin CLI (`devin acp`) | Agent subprocess | ACP v1 / stdio | Devin runs; registered built-in, live contract qualification deferred | Browser login to a Devin Cloud account |
 | ACP registry JSON | Mutable metadata feed | HTTPS GET in CI/explicit diagnostics | Verify reviewed built-in metadata; never choose a runtime version automatically | None |
 | Zed and other ACP clients | Inbound local client | ACP v1 / stdio | Drive direct-agent, named-workflow, and orchestrated runs through `ziggy serve` | Local subprocess trust; Ziggy user policy remains authoritative |
 
@@ -919,7 +924,7 @@ sequenceDiagram
 ### 8.1 In Scope
 
 - Python engine + typer CLI for headless one-shot agent and workflow runs
-- ACP v1 client support for Claude, Codex, and trusted user-registered custom agents
+- ACP v1 client support for Claude, Codex, OpenCode, Devin, and trusted user-registered custom agents
 - One coherent `RunResult`: canonical redacted event stream, small result manifest, optional change/artifact references, derived SQLite index
 - Trusted user TOML plus constrained project TOML with field-specific monotonic merging and env-var secret references
 - Guarded ACP mediation policy with explicit advisory/enforcement scope and no project-selectable allow-all mode
@@ -927,7 +932,7 @@ sequenceDiagram
 - ACP v1 server mode with direct-agent, named-workflow, and orchestrator routing; streamed downstream activity; client permission forwarding with guarded fallback; cancellation; workspace lease
 - Constrained plan-then-execute orchestrator supporting trusted single agents, trusted named workflows, and bounded inline agent-only workflows
 - `ziggy doctor`, config provenance, run browsing/reindex, and metadata-only structured logs
-- Testing: raw-wire and SDK-backed mock agents, security/fault-injection suites, and live release contracts for both built-ins
+- Testing: raw-wire and SDK-backed mock agents, security/fault-injection suites, and live release contracts for the release-gating built-ins (Claude, Codex)
 
 ### 8.2 Out of Scope
 
@@ -937,7 +942,7 @@ sequenceDiagram
 - **Parallel workflow steps and automatic retries**: deferred until worktree/snapshot isolation and idempotency semantics exist
 - **Script, shell, and Python workflow steps**: model- or repository-defined command execution is deferred
 - **Public Python workflow API**: internal engine APIs are unstable in v0.1
-- **OpenCode and Devin as release-gating built-ins**; they remain custom-agent candidates
+- **OpenCode and Devin as release-gating built-ins**: both ship registered in the default registry and are launchable without config, but their live contract qualification is deferred, so neither gates the v0.1 release nor appears in a bare `ziggy doctor`'s scope
 - **Git worktree isolation** and merge/collect semantics
 - **MCP server passthrough** to agents: deferred
 - **Web/TUI dashboard** for browsing runs: CLI only
@@ -1003,7 +1008,7 @@ sequenceDiagram
 
 ---
 
-### 9.3 Phase 2: Trusted Config, CLI, Two Built-ins & ACP Mediation
+### 9.3 Phase 2: Trusted Config, CLI, Release-Gating Built-ins & ACP Mediation
 
 **Completion Criteria**: Claude and Codex pass `ziggy doctor` and the fixed live smoke set; project config cannot escalate authority; one-shot runs expose accurate capture and enforcement scope; runs are browsable and reindexable.
 
@@ -1018,7 +1023,7 @@ sequenceDiagram
 **Checkpoint Gate**:
 - [ ] Security review of config scope, command trust, environment inheritance, path resolution, and guarded mediation
 - [ ] Hostile repository cannot register commands, obtain extra environment, loosen policy, or expand paths
-- [ ] Both built-ins complete the release smoke set at the target reliability
+- [ ] Both release-gating built-ins (Claude, Codex) complete the release smoke set at the target reliability
 - [ ] Clean-machine onboarding meets the install-to-first-run metric
 
 ---
@@ -1115,7 +1120,7 @@ Post-MVP items remain separately gated:
 | Wire conformance | Raw JSON-RPC agent and client fixtures independent of the production SDK | pytest-asyncio + golden frames | Required ACP client/server methods, permission bridge, unknown extensions, malformed frames, ordering, cancellation |
 | Integration | Full engine against raw and SDK-backed mock agents plus Ziggy client/server loopback | pytest-asyncio | All MVP REQ acceptance criteria, routes, faults, and terminal states |
 | Security | Hostile project config/YAML/catalog/plan output, planning-workspace isolation, permission-bridge escalation, path/symlink escapes, lease/prune containment, environment leaks, log injection, secret corpus, process-tree cleanup | pytest + platform helpers | Zero known authority escalations, forbidden plan executions, broad deletion targets, or seeded-secret persistence leaks |
-| Contract (live) | Real Claude and Codex: install/auth → initialize → prompt → update → permission → cancel/crash behavior | pytest marker `-m live`, requires accounts | 2/2 built-ins on release and every SDK/adapter upgrade; fixed 20-run smoke set |
+| Contract (live) | Real Claude and Codex: install/auth → initialize → prompt → update → permission → cancel/crash behavior | pytest marker `-m live`, requires accounts | 2/2 release-gating built-ins on release and every SDK/adapter upgrade; fixed 20-run smoke set. OpenCode and Devin run the same suite before either is treated as qualified, but do not gate v0.1 |
 | ACP client smoke | Zed and raw client against `ziggy serve` | Manual Zed checklist + automated raw client | Direct, named-workflow, orchestrated, permission, busy, and cancellation scenarios |
 | Orchestrator quality | Fixed goals covering all plan types, malicious descriptions, invalid repair, and poor routing | pytest + blinded human labels | Validity/usefulness targets in §3.2 with all failures included |
 | Performance/reliability | Startup, redacted streaming, 10k-run index, large-event soak, concurrent independent invocations, crash recovery | benchmark/fault harness | Budgets in §6.1 and no corruption/leaks |
@@ -1203,8 +1208,8 @@ Local tool — "monitoring" is self-inspection: metadata JSONL logs with run/ste
 | `agent-client-protocol` (Python SDK) | ACP org (primary maintainer: PsiACE) | Exact PyPI version/schema alignment to resolve in Phase 0; do not assume 0.11.1 | Core protocol layer; implementation blocked until pin is verified |
 | claude-agent-acp | agentclientprotocol org | 0.63.0, active churn | Claude support degrades; pin + contract tests |
 | codex-acp | agentclientprotocol org | 1.1.7 | Codex support |
-| OpenCode CLI | OpenCode | Deferred built-in; custom registration possible | Post-MVP built-in breadth only |
-| Devin CLI | Cognition | Deferred built-in; custom registration possible | Post-MVP built-in breadth only |
+| OpenCode CLI | OpenCode | Registered built-in via `opencode acp`; no pinnable adapter, live qualification deferred | Optional built-in breadth; a CLI change is caught at handshake, not by a pin |
+| Devin CLI | Cognition | Registered built-in via `devin acp`; no pinnable version published, live qualification deferred | Optional built-in breadth; a CLI change is caught at handshake, not by a pin |
 | uv, typer, pydantic, rich, ruff, pytest | Community | Stable | Low |
 
 ### 12.2 Cross-Team Dependencies
@@ -1240,7 +1245,7 @@ Local tool — "monitoring" is self-inspection: metadata JSONL logs with run/ste
 | # | Question | Owner | Due Date | Resolution |
 |---|----------|-------|----------|------------|
 | 1 | Which exact `agent-client-protocol` Python release and upstream schema revision model every required v1 surface? | Ada | Phase 0 gate | Open; implementation-blocking |
-| 2 | For Claude and Codex, which filesystem/shell/network operations are ACP-mediated versus performed directly by the subprocess? | Ada | Phase 0 gate | Open; must populate capability matrix |
+| 2 | For each built-in, which filesystem/shell/network operations are ACP-mediated versus performed directly by the subprocess? | Ada | Phase 0 gate | Open; must populate capability matrix — no row is observed for OpenCode or Devin |
 | 3 | Which file-change sources are trustworthy for each built-in in dirty, untracked, binary, and agent-commit scenarios? | Ada | Phase 0 gate | Open; determines capture-status rules |
 | 4 | What minimal baseline environment does each built-in require without inheriting unrelated credentials? | Ada | Phase 0 gate | Open; document per-agent exceptions |
 | 5 | Are the CLI names/flags in §5.2 final before user documentation and shell completions are generated? | Ada | Phase 2 gate | Open |
@@ -1253,7 +1258,7 @@ Local tool — "monitoring" is self-inspection: metadata JSONL logs with run/ste
 | Decision | Resolution |
 |----------|------------|
 | MVP positioning | Repeatable execution/orchestration/audit layer through CLI and ACP server mode, not native-CLI interactive-session replacement |
-| Built-ins | Claude and Codex release-gating; OpenCode and Devin deferred |
+| Built-ins | Four registered by default: Claude and Codex through pinned npm adapters, OpenCode and Devin through the vendor CLI's `acp` subcommand. Claude and Codex are release-gating; OpenCode and Devin ship registered with live contract qualification deferred |
 | Security boundary | ACP policy is mediation/advisory unless an independently verified OS sandbox reports enforcement |
 | Config precedence | Field-specific and monotonic; project scope cannot loosen user authority |
 | Workflow execution | Agent-only YAML, serial deterministic scheduling, no automatic retries |
@@ -1269,7 +1274,7 @@ Local tool — "monitoring" is self-inspection: metadata JSONL logs with run/ste
 | Term | Definition |
 |------|------------|
 | ACP | Agent Client Protocol — open JSON-RPC 2.0 protocol over stdio between clients (editors/harnesses) and AI agents |
-| Agent | An ACP-speaking subprocess; Claude and Codex are v0.1 built-ins, and custom agents require trusted user registration |
+| Agent | An ACP-speaking subprocess; Claude, Codex, OpenCode, and Devin are v0.1 built-ins, and custom agents require trusted user registration |
 | RunResult | Ziggy's schema-versioned manifest for a run, referencing its canonical event stream and optional artifacts |
 | Workflow | A constrained YAML dependency graph of agent steps; v0.1 scheduling is serial |
 | Orchestrator | Registered planning agent that selects a trusted-user-approved orchestration agent/named workflow or generates a bounded serial agent-only graph under the unchanged user authority ceiling |
@@ -1292,6 +1297,7 @@ Local tool — "monitoring" is self-inspection: metadata JSONL logs with run/ste
 ### 15.3 Change Log
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| 1.3 | 2026-07-30 | Ada | Registered OpenCode (`opencode acp`) and Devin (`devin acp`) as default built-ins launched from the vendor CLI rather than a pinnable npm adapter; kept Claude and Codex as the only release-gating built-ins and their live qualification deferred; recorded the vendor-CLI consequences (handshake-only version identity, `custom:<name>` egress identity, exclusion from a bare `ziggy doctor` scope, name-matched npm packages are not trust roots); required provider identity on every recorded run |
 | 1.2 | 2026-07-28 | Ada + Codex | Restored ACP server mode and orchestration to v0.1; added permission bridging, workspace leases, direct-tool planning acknowledgement, trusted orchestration-target catalogs, strict three-variant plans, bounded inline agent-only workflows, server/Zed gates, and separate validity/usefulness metrics |
 | 1.1 | 2026-07-28 | Ada + Codex | Refocused v0.1 on headless execution/audit; reduced built-ins; constrained workflows; clarified advisory security boundary; added monotonic config trust, egress/resource controls, coherent RunResult/event model, Phase 0 feasibility gate, and expanded security/fault testing |
 | 1.0 | 2026-07-28 | Ada | Initial version — compiled from adaptive interview (6 rounds, 25 questions) + ACP ecosystem research |

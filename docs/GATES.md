@@ -21,7 +21,7 @@ Test baseline at completion: **1181 passing**, ruff clean, macOS/Python 3.12.
 | No feature/security claim depends on an unobserved agent behavior | ✅ | Live probes deferred; every unverified built-in behavior is `direct_tools_assumed=True` and gated at handshake, never assumed — `docs/phase0/capability-matrix.md` |
 | `guarded` documented as advisory wherever direct tools bypass mediation | ✅ | `docs/phase0/trust-boundary.md` terminology rules; `enforcement_scope` on every `PermissionDecision`; doctor prints advisory warnings |
 | File-change capture uses partial/derived/unavailable honestly | ✅ | `CaptureStatus` enum; recorder never labels `complete` without proof (`events/pipeline.py` capture_summary) |
-| Built-ins installable from reviewed exact versions, no runtime latest-resolution | ✅ | `npx --no-install` launch (`agents/builtins.py`); no download in run/doctor |
+| Built-ins installable from reviewed exact versions, no runtime latest-resolution | ✅ | `npx --no-install` launch for the npm-adapter built-ins (`agents/builtins.py`); no download in run/doctor. The vendor-CLI built-ins (`opencode`, `devin`) are `PATH`-resolved and download nothing either, but carry **no launch-time version pin** — version identity is handshake-reported, and they are not release-gating |
 
 Live capability-matrix population: ⏸️ (release checklist §1).
 
@@ -41,7 +41,7 @@ Live capability-matrix population: ⏸️ (release checklist §1).
 |------|--------|----------|
 | Security review of config scope, command trust, env inheritance, path resolution, guarded mediation | ✅ | `tests/security/test_hostile_project.py` (forbidden project keys, ceiling raises, secret literals, symlinked project config); adversarial review pass (this doc) |
 | Hostile repository cannot register commands / obtain env / loosen policy / expand paths | ✅ | Same suite; monotonic merge USER_ONLY fail-closed (`config/loader.py`); case-folded path containment (`policy/paths.py`) |
-| Both built-ins complete the release smoke set at target reliability | ⏸️ | Mock contract tests pass; live 20-run smoke is release checklist §1 |
+| Both release-gating built-ins (claude, codex) complete the release smoke set at target reliability | ⏸️ | Mock contract tests pass; live 20-run smoke is release checklist §1 |
 | Clean-machine onboarding meets install-to-first-run metric | ⏸️ | Release checklist §3 |
 
 ## Phase 3 — Constrained Workflow MVP (§9.4)

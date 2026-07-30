@@ -2,16 +2,18 @@
 
 ``run_checks`` produces an ordered list of :class:`CheckResult` rows, each
 ``{name, status: pass|fail|warn|skip, detail, hint}``. Agent-scoped checks
-carry the agent name as a ``:<agent>`` suffix. The default scope is the v0.1
-builtins; ``--agent X`` narrows to one agent, ``--all`` widens to every
-registered agent.
+carry the agent name as a ``:<agent>`` suffix. The default scope is
+``ziggy.agents.DEFAULT_PROBED_AGENTS`` (the release-gating builtins, whose
+adapters the install docs require); the vendor-CLI builtins are optional
+installs, so probe them with ``--agent opencode`` / ``--agent devin``.
+``--agent X`` narrows to one agent, ``--all`` widens to every registered agent.
 
 The live handshake check launches the *registered* command via
 :class:`ziggy.acp.AgentProcessClient` (launch + ``initialize`` + clean
-shutdown) and never downloads anything: builtin commands stay behind
-``npx --no-install`` and command resolvability is probed with
-``shutil.which`` only. ``api_key_env`` is checked for presence only — the
-value is never read into a message or printed.
+shutdown) and never downloads anything: npm-adapter builtins stay behind
+``npx --no-install``, vendor-CLI builtins run an already-installed binary, and
+command resolvability is probed with ``shutil.which`` only. ``api_key_env`` is
+checked for presence only — the value is never read into a message or printed.
 """
 
 from __future__ import annotations
@@ -39,7 +41,13 @@ from ziggy.acp import (
     TerminalRequestN,
     UnsupportedByPolicy,
 )
-from ziggy.agents import INSTALL_HINTS, KNOWN_DEGRADATIONS, AgentRegistry
+from ziggy.agents import (
+    DEFAULT_PROBED_AGENTS,
+    INSTALL_HINTS,
+    KNOWN_DEGRADATIONS,
+    VENDOR_CLI_AGENTS,
+    AgentRegistry,
+)
 from ziggy.config import ResolvedConfig, ZiggyConfig, load_config
 from ziggy.engine import compose_child_env
 from ziggy.errors import ConfigError, PersistenceError, ZiggyError
@@ -202,7 +210,9 @@ def _index_integrity(store: RunStore) -> CheckResult:
 def _agent_hint(agent: AgentConfig) -> str:
     builtin_hint = INSTALL_HINTS.get(agent.name)
     if agent.builtin and builtin_hint:
-        return f"install the pinned adapter: {builtin_hint}"
+        # vendor-CLI built-ins carry no pinnable adapter (see agents/builtins.py)
+        noun = "vendor CLI" if agent.name in VENDOR_CLI_AGENTS else "pinned adapter"
+        return f"install the {noun}: {builtin_hint}"
     return "install the agent adapter and ensure its command is on PATH"
 
 
@@ -388,7 +398,11 @@ def _select_agents(registry: AgentRegistry, *, agent: str | None, all_agents: bo
         return [agent]
     if all_agents:
         return registry.names()
-    return [name for name in registry.names() if registry.is_builtin(name)]
+    return [
+        name
+        for name in registry.names()
+        if registry.is_builtin(name) and name in DEFAULT_PROBED_AGENTS
+    ]
 
 
 def run_checks(

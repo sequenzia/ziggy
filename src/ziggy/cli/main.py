@@ -888,7 +888,13 @@ def doctor(
         str | None, typer.Option("--agent", help="Probe a single registered agent.")
     ] = None,
     all_agents: Annotated[
-        bool, typer.Option("--all", help="Include custom agents (default: builtins).")
+        bool,
+        typer.Option(
+            "--all",
+            help="Probe every registered agent, including the optional "
+            "vendor-CLI builtins and custom agents "
+            "(default: the claude/codex builtins).",
+        ),
     ] = False,
 ) -> None:
     """Environment diagnostics with per-check pass/fail and fix hints (REQ-014)."""

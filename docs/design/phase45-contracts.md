@@ -106,7 +106,7 @@ Also `--json`-style assertion that server stdout carries ONLY JSON-RPC frames.
   'advisory'} in policy provenance AND acquire the workspace lease before
   planner launch, holding through execution/plan-only completion.
   (Contained planners: lease acquired only for the execution stage. v0.1
-  reality: both builtins are direct_tools_assumed ⇒ ack required — document.)
+  reality: every builtin is direct_tools_assumed ⇒ ack required — document.)
 - Planning run: empty `tempfile.mkdtemp(prefix='ziggy-plan-')` cwd; env =
   compose_child_env minus inherit extras beyond baseline (HOME, PATH + api key);
   policy: planning profile = deny ALL fs writes, deny terminal, allow fs reads

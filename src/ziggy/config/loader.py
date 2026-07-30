@@ -32,14 +32,16 @@ from typing import Any, get_args, get_origin
 from pydantic import BaseModel, ConfigDict
 from pydantic import ValidationError as PydanticValidationError
 
+from ziggy.agents.builtins import BUILTIN_AGENTS
 from ziggy.config.schema import ZiggyConfig
 from ziggy.errors import ConfigError
 from ziggy.models.common import CaptureProfile, ConfigSource, ProjectAction
 from ziggy.redact import CustomPattern, Redactor
 
 #: Agent names whose launch defaults ship pinned in ``agents/builtins.py``;
-#: only these may omit ``command`` in config.
-BUILTIN_AGENT_NAMES: frozenset[str] = frozenset({"claude", "codex"})
+#: only these may omit ``command`` in config. Derived from the single source of
+#: truth so adding a built-in cannot drift the two lists apart.
+BUILTIN_AGENT_NAMES: frozenset[str] = frozenset(BUILTIN_AGENTS)
 
 _AGENT_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]{0,63}$")
 #: ``api_key_env`` must be an env var NAME, never a value.

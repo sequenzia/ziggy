@@ -139,13 +139,13 @@ agent name and must match `^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`.
 
 | Key | Type | Default | Notes |
 |-----|------|---------|-------|
-| `command` | string \| null | `null` | required for custom agents; only `claude` and `codex` may omit it |
+| `command` | string \| null | `null` | required for custom agents; only the four builtin names may omit it |
 | `args` | list of strings | `[]` | argv after `command` |
 | `env` | table of string → string | `{}` | literal, non-secret environment entries |
 | `inherit_env` | list of strings | `[]` | names copied from the parent environment when present |
 | `working_dir` | string \| null | `null` | child working directory |
 | `api_key_env` | string \| null | `null` | env var **name**, validated `^[A-Z][A-Z0-9_]*$` — never a value |
-| `provider` | string \| null | `null` | egress identity (`anthropic`, `openai`, …) |
+| `provider` | string \| null | `null` | egress identity (`anthropic`, `openai`, …); unset falls back to `custom:<agent-name>` |
 | `orchestration_eligible` | bool | `false` | may a model-generated plan invoke this agent |
 
 Two omissions are deliberate and, because unknown keys are forbidden, writing
@@ -249,7 +249,7 @@ uncontained-planner acknowledgement.
 | `eligible_agents` | list of strings | `[]` | agents a generated plan may invoke |
 | `trusted_workflows` | list of `{path, sha256}` | `[]` | workflows a plan may select, pinned by content hash |
 
-- Both built-in agents are assumed to run direct (non-ACP) local tools, so
+- Every built-in agent is assumed to run direct (non-ACP) local tools, so
   mediation for them is **advisory**. Planning with such an agent requires
   `allow_uncontained_planner = true` in trusted user config; without it,
   orchestration refuses to start and `ziggy doctor` reports the planner as
@@ -522,17 +522,43 @@ matching, so it is stripped from captured output.
 
 ## Registering agents
 
-Two agents ship built in, with reviewed, exact version pins:
+Four agents ship built in — no `[agents.*]` entry is needed to use any of them:
 
 | Name | Command | Provider | `api_key_env` | `orchestration_eligible` |
 |------|---------|----------|---------------|--------------------------|
 | `claude` | `npx --no-install claude-agent-acp@0.63.0` | `anthropic` | `null` (adapter-managed login) | `false` |
 | `codex` | `npx --no-install codex-acp@1.1.7` | `openai` | `null` (ChatGPT login state) | `false` |
+| `opencode` | `opencode acp` | `custom:opencode` | `null` (`opencode auth login` state) | `false` |
+| `devin` | `devin acp` | `custom:devin` | `null` (Devin Cloud browser login) | `false` |
 
-`--no-install` is load-bearing: if the pinned package is not installed, launch
-fails with an install hint. Ziggy never downloads anything during a run.
+`claude` and `codex` launch a reviewed, exactly pinned npm adapter, and
+`--no-install` is load-bearing: if the pinned package is not installed, the
+launch fails. Ziggy never downloads anything during a run. The install line for
+a given agent comes from `ziggy doctor`, which prints it as a fix hint.
 
-Both builtins carry `direct_tools_assumed = true` — the conservative default
+`opencode` and `devin` speak ACP from the vendor CLI itself, so there is no
+adapter package to pin. Ziggy resolves the binary on `PATH` and runs whatever is
+there — nothing is downloaded, but **the launch command carries no version**.
+The version you actually ran is the one the agent reports at handshake, recorded
+in the RunResult. Install them only if you use them:
+
+```bash
+npm install -g opencode-ai@1.18.9   # or the install script / Homebrew
+brew install --cask devin-cli       # Linux: curl -fsSL https://cli.devin.ai/install.sh | bash
+```
+
+Their `provider` deliberately names no vendor: OpenCode routes to whichever
+model provider you configured, and the Devin CLI's routing is not verified here,
+so labelling either `anthropic`/`openai` would misstate egress. Each declares the
+distinct identity `custom:<name>` instead — the same string an unlabelled agent
+would fall back to, declared explicitly because it is what you acknowledge and
+what persisted manifests carry. A workflow that pipes `claude` output into `opencode` therefore crosses
+providers and needs
+`--acknowledge-egress anthropic,custom:opencode` (or a matching
+`[egress] acknowledged_provider_sets` entry). Set `provider` yourself if you
+know better for your setup — it is an overridable field.
+
+All four builtins carry `direct_tools_assumed = true` — the conservative default
 while live capability probes remain deferred. It is not overridable from
 config, and it is why mediation for these agents is reported as advisory.
 
@@ -547,11 +573,11 @@ api_key_env = "ANTHROPIC_API_KEY"   # command/args stay at the reviewed pin
 orchestration_eligible = true
 ```
 
-**Custom agents.** `command` is required — only the two builtin names may omit
-it. A custom agent missing a command fails with:
+**Custom agents.** `command` is required — only the builtin names may omit it.
+A custom agent missing a command fails with:
 
 ```text
-agents.<name>: 'command' is required for custom agents (only builtins [claude, codex] may omit it)
+agents.<name>: 'command' is required for custom agents (only builtins [claude, codex, devin, opencode] may omit it)
 ```
 
 Custom agents are always registered with `direct_tools_assumed = true`; they

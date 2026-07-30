@@ -62,7 +62,7 @@ Loader outputs `ResolvedConfig`: `.config` (ZiggyConfig), `.provenance`
 (dict field-path → {source, project_action}), `.fingerprint` (sha256 of
 canonical non-secret dump + provenance), `.warnings`. Secret-looking literal
 values anywhere in config ⇒ `ConfigError` (run Redactor built-ins over every
-string value). Registered agent validation: builtin names (claude, codex) may
+string value). Registered agent validation: builtin names (claude, codex, opencode, devin) may
 omit command (defaults from agents/builtins.py); custom agents require command.
 
 ## Child environment composition (engine/env.py)

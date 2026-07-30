@@ -3,8 +3,8 @@
 Local execution, orchestration, and audit harness for AI coding agents that speak the
 [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
 
-Ziggy puts one headless command surface in front of Claude, Codex, and trusted custom
-agents, and records what each of them was observed doing. Every invocation — a one-shot
+Ziggy puts one headless command surface in front of Claude, Codex, OpenCode, Devin, and
+trusted custom agents, and records what each of them was observed doing. Every invocation — a one-shot
 run, a multi-step workflow, a planned graph, or a prompt arriving from an editor — funnels
 through the same engine and leaves behind the same schema-versioned `RunResult` and
 append-only `events.jsonl`.
@@ -16,7 +16,7 @@ append-only `events.jsonl`.
 
     An agent subprocess is a normal OS process. Nothing in Ziggy prevents it from opening
     files, spawning shells, or making network calls **directly**, outside the protocol and
-    outside every rule Ziggy enforces. In v0.1 both built-in agents are **assumed** to have
+    outside every rule Ziggy enforces. In v0.1 every built-in agent is **assumed** to have
     exactly those direct tools — live capability probes are deferred — so `ziggy doctor`
     reports their mediation as `advisory`.
 
@@ -86,17 +86,26 @@ Requires Python 3.12+ (`>=3.12,<3.15`), macOS or Linux, and Node.js for the pinn
 uv tool install git+https://github.com/sequenzia/ziggy@main
 ```
 
-Ziggy **never auto-downloads** an agent adapter — builtins launch with `npx --no-install`.
-Install the exact reviewed pins yourself:
+Ziggy **never auto-downloads** an agent adapter — the `claude` and `codex` builtins launch
+with `npx --no-install`. Install the exact reviewed pins yourself:
 
 ```bash
 npm install -g claude-agent-acp@0.63.0 codex-acp@1.1.7
 ```
 
+The `opencode` and `devin` builtins speak ACP from their own CLI, so they have no adapter
+to pin. Install either one only if you use it:
+
+```bash
+npm install -g opencode-ai@1.18.9
+brew install --cask devin-cli   # Linux: curl -fsSL https://cli.devin.ai/install.sh | bash
+```
+
 Verify the install, the store, and each agent's handshake:
 
 ```bash
-ziggy doctor --all
+ziggy doctor                    # claude + codex
+ziggy doctor --agent opencode   # add a vendor CLI you installed
 ```
 
 Then run something. Ziggy always acts on the directory you invoke it from — there is no

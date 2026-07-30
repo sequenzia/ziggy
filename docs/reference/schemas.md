@@ -176,12 +176,12 @@ Handshake-derived identity and capability snapshot for one step's agent. Everyth
 
 ### EgressRecord
 
-One record per step that receives another step's outputs (plus one per provider-bearing direct run).
+One record per step that receives another step's outputs, plus one per direct run.
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `step_id` | `str` | — | The **receiving** step. |
-| `provider` | `str` | — | Provider of the receiving step's agent. |
+| `provider` | `str` | — | Egress identity of the receiving step's agent: its declared `provider`, or the `custom:<agent-name>` fallback when it declares none. Never null. |
 | `input_sources` | `str[]` | `[]` | Raw `steps.<id>.outputs.<name>` strings, declaration order. `vars.*` inputs are not egress lineage. |
 | `acknowledged_by` | `str \| null` | `null` | `config`, `flag:--acknowledge-egress`, or `null`. Stamped only when the step actually receives *another provider's* output. |
 

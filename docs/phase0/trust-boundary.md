@@ -15,7 +15,7 @@ making network calls directly. Therefore:
   an ACP request), `agent_reported` (agent claims it did/didn't do something),
   `os_enforced` (reserved; only a separately verified sandbox provider may emit it —
   none exists in v0.1).
-- Because live probes are deferred, both built-ins are assumed to have direct
+- Because live probes are deferred, every built-in is assumed to have direct
   filesystem/shell tools (`capability-matrix.md`); doctor reports mediation as
   `advisory` for them.
 
