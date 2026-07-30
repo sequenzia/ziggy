@@ -1,4 +1,4 @@
-# Ziggy v0.1
+# Ziggy
 
 Local execution, orchestration, and audit harness for AI coding agents that
 speak the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
