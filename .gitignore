@@ -4,5 +4,6 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 dist/
+src/ziggy/_version.py
 *.egg-info/
 site/

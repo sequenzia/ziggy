@@ -1,6 +1,10 @@
 """Ziggy — local execution, orchestration, and audit harness for ACP agents."""
 
-__version__ = "0.1.0.dev0"
+try:
+    # Generated from git tags by hatch-vcs at build/sync time; not in git.
+    from ziggy._version import __version__
+except ImportError:  # fresh checkout before the first `uv sync`
+    __version__ = "0.0.0"
 
 RESULT_SCHEMA_VERSION = 1
 EVENTS_SCHEMA_VERSION = 1

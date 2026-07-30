@@ -35,6 +35,7 @@ from typing import Annotated, Any, NoReturn
 
 import typer
 
+from ziggy import __version__
 from ziggy.acp import serve_stdio
 from ziggy.agents import AgentRegistry
 from ziggy.cli.doctor import run_checks
@@ -73,6 +74,27 @@ app.add_typer(runs_app, name="runs")
 app.add_typer(config_app, name="config")
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(schemas_app, name="schemas")
+
+
+def _print_version(value: bool) -> None:
+    if value:
+        print(f"ziggy {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _root(
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            help="Print the Ziggy version and exit.",
+            callback=_print_version,
+            is_eager=True,
+        ),
+    ] = False,
+) -> None:
+    pass
 
 _SINCE_DAYS_RE = re.compile(r"^(\d+)d$")
 

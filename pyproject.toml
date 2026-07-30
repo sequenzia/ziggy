@@ -1,6 +1,6 @@
 [project]
 name = "ziggy"
-version = "0.1.0.dev0"
+dynamic = ["version"]
 description = "Local execution, orchestration, and audit harness for ACP-speaking AI coding agents"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
@@ -31,8 +31,19 @@ docs = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+# Git tags (vX.Y.Z) are the single source of truth for the version. Tagged
+# commits build as X.Y.Z; anything past a tag gets a PEP 440 dev version like
+# 0.1.1.dev3+g1a2b3c4. The fallback only applies to treeless builds (e.g. a
+# GitHub source tarball without .git).
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.0.0"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/ziggy/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ziggy"]

@@ -77,4 +77,5 @@ nav:
       - Capability Matrix: phase0/capability-matrix.md
       - Process Lifecycle: phase0/process-lifecycle.md
       - Gate Record: GATES.md
+      - Versioning & Releasing: RELEASING.md
       - Release Checklist: RELEASE-CHECKLIST.md

@@ -54,11 +54,11 @@ import logging
 from collections.abc import Coroutine, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
-from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
+from ziggy import __version__
 from ziggy.acp import (
     ClientPermissionUnsupported,
     MessageChunkEvent,
@@ -131,10 +131,7 @@ class ServerConnectionLike(Protocol):
 
 
 def _ziggy_version() -> str:
-    try:
-        return importlib_metadata.version("ziggy")
-    except importlib_metadata.PackageNotFoundError:  # editable/unbuilt tree
-        return "0.0.0"
+    return __version__
 
 
 def _request_summary(tool_call: dict[str, Any]) -> str:

@@ -1,0 +1,65 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      # hatch-vcs derives the version from tag history, so fetch everything.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # setup-uv publishes no floating major tag for v8+; pin the exact release.
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - run: uv sync --locked
+
+      - name: Lint and test (release gate)
+        run: |
+          uv run ruff check .
+          uv run pytest
+
+      - name: Require a changelog section for this version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if ! grep -q "^## \[${VERSION}\]" CHANGELOG.md; then
+            echo "CHANGELOG.md has no '## [${VERSION}]' section — update it before tagging." >&2
+            exit 1
+          fi
+
+      - name: Build sdist and wheel
+        run: |
+          uv build
+          # The built version must match the tag; a mismatch means the tag
+          # does not point at the checked-out commit.
+          VERSION="${GITHUB_REF_NAME#v}"
+          ls "dist/ziggy-${VERSION}.tar.gz" "dist/ziggy-${VERSION}-py3-none-any.whl"
+
+      - name: Extract this version's release notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v ver="$VERSION" '
+            $0 ~ ("^## \\[" ver "\\]") { found = 1; next }
+            found && /^## \[/ { exit }
+            found && /^\[/ && /\]:/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          cat release-notes.md
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file release-notes.md
