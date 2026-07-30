@@ -9,6 +9,8 @@ Versions are derived from git tags (`vX.Y.Z`) via hatch-vcs; see
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-30
+
 ### Added
 
 - Add one-shot agent execution (`ziggy run`) with streamed progress, secret
@@ -32,4 +34,5 @@ Versions are derived from git tags (`vX.Y.Z`) via hatch-vcs; see
 - Add `ziggy --version` flag
 - Add documentation site published to GitHub Pages
 
-[Unreleased]: https://github.com/sequenzia/ziggy/commits/main
+[Unreleased]: https://github.com/sequenzia/ziggy/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/sequenzia/ziggy/releases/tag/v0.1.0
