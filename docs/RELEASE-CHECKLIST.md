@@ -8,7 +8,7 @@ v0.1.0 (spec §9.7 release gate + §3.2 metrics).
 
 ## 1. Live built-in contract qualification (spec §3.2, §10.1 'Contract (live)')
 
-- [ ] Install reviewed pins on a dev machine: `npm install -g claude-agent-acp@0.63.0 codex-acp@1.1.7`; record package integrity hashes.
+- [ ] Install reviewed pins on a dev machine: `npm install -g @agentclientprotocol/claude-agent-acp@0.64.0 @agentclientprotocol/codex-acp@1.1.7`; record package integrity hashes.
 - [ ] `ziggy doctor` per agent: handshake OK, capabilities captured into `docs/phase0/capability-matrix.md` (replace every UNVERIFIED row).
 - [ ] Direct-tool probes per the capability-matrix checklist (fs/terminal mediation vs direct, cancellation latency, file-change visibility, minimal env).
 - [ ] Author the `-m live` contract suite runs: fixed 20-run smoke set per built-in; target ≥95% per agent; failures classified, never excluded.

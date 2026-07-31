@@ -62,7 +62,7 @@ class TestBuiltins:
         assert claude.name == "claude"
         assert claude.builtin is True
         assert claude.command == "npx"
-        assert claude.args == ["--no-install", "claude-agent-acp@0.63.0"]
+        assert claude.args == ["--no-install", "@agentclientprotocol/claude-agent-acp@0.64.0"]
         assert claude.provider == "anthropic"
         assert claude.api_key_env is None
         assert claude.orchestration_eligible is False
@@ -73,7 +73,7 @@ class TestBuiltins:
         assert codex.name == "codex"
         assert codex.builtin is True
         assert codex.command == "npx"
-        assert codex.args == ["--no-install", "codex-acp@1.1.7"]
+        assert codex.args == ["--no-install", "@agentclientprotocol/codex-acp@1.1.7"]
         assert codex.provider == "openai"
         assert codex.api_key_env is None
         assert codex.orchestration_eligible is False

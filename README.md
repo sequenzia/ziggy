@@ -18,7 +18,7 @@ See `specs/ziggy-mvp-SPEC.md` for the full product/technical spec.
 ```bash
 uv tool install git+<repo-url>@v0.1.0        # once released
 # then install the pinned agent adapters explicitly (Ziggy never auto-downloads):
-npm install -g claude-agent-acp@0.63.0 codex-acp@1.1.7
+npm install -g @agentclientprotocol/claude-agent-acp@0.64.0 @agentclientprotocol/codex-acp@1.1.7
 # opencode and devin are built in too, but speak ACP from their own CLI —
 # install either one only if you use it (nothing is ever auto-downloaded):
 npm install -g opencode-ai@1.18.9

@@ -30,8 +30,8 @@ from __future__ import annotations
 from ziggy.models.agent import AgentConfig
 
 #: Exact reviewed adapter pins (spec §12.1 + ACP registry review; never "latest").
-CLAUDE_ADAPTER_PIN = "claude-agent-acp@0.63.0"
-CODEX_ADAPTER_PIN = "codex-acp@1.1.7"
+CLAUDE_ADAPTER_PIN = "@agentclientprotocol/claude-agent-acp@0.64.0"
+CODEX_ADAPTER_PIN = "@agentclientprotocol/codex-acp@1.1.7"
 
 #: ACP subcommand of the vendor CLIs (``opencode acp``, ``devin acp``: JSON-RPC
 #: over stdio, meant to be launched by an ACP client — never interactively).

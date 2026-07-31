@@ -162,7 +162,7 @@ User runs `ziggy workflow run review-and-fix`. The engine resolves the YAML, val
 **REQ-002: Built-in agents**
 
 **Acceptance Criteria**:
-- [ ] Four built-in agents are registered by default in v0.1, in two launch shapes: Claude (`claude-agent-acp`) and Codex (`codex-acp`) launch a pinned npm adapter through `npx --no-install`, while OpenCode (`opencode acp`) and Devin (`devin acp`) launch the vendor CLI's own ACP subcommand, resolved on `PATH`. None of the four requires user config to be usable.
+- [ ] Four built-in agents are registered by default in v0.1, in two launch shapes: Claude (`@agentclientprotocol/claude-agent-acp`) and Codex (`@agentclientprotocol/codex-acp`) launch a pinned npm adapter through `npx --no-install`, while OpenCode (`opencode acp`) and Devin (`devin acp`) launch the vendor CLI's own ACP subcommand, resolved on `PATH`. None of the four requires user config to be usable.
 - [ ] Claude and Codex are the only **release-gating** built-ins. OpenCode and Devin ship registered but unqualified: every capability-matrix row for them is UNVERIFIED, they carry no `KNOWN_DEGRADATIONS` entries derived from vendor documentation, and they are excluded from a bare `ziggy doctor`'s probe scope because their vendor CLI is an optional install that must not fail a diagnostic run on a machine that never wanted it.
 - [ ] Built-in launch commands are pinned to known-good adapter versions **where the distribution supports pinning**; trusted user config can override command, args, and explicit environment. A vendor-CLI built-in carries no launch-time version pin: its version identity is the handshake-reported `agentInfo.version`, recorded per run and never assumed from a reviewed-version constant.
 - [ ] Built-ins are installed deliberately; Ziggy does not silently download or execute an unpinned package during a run or diagnostic command. `npx --no-install` refuses to fetch an absent adapter, a vendor CLI is only ever resolved on `PATH`, and package identity and integrity metadata are recorded where the distribution supports it.
@@ -172,7 +172,7 @@ User runs `ziggy workflow run review-and-fix`. The engine resolves the YAML, val
 - Built-in launch commands are hardcoded at reviewed versions and verified against the machine-readable ACP registry (`https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json`) in CI. The mutable registry is metadata, not a runtime trust root.
 - A package name that merely resembles a vendor adapter is not a trust root either: `opencode-acp` on npm is an unrelated third-party package and `devin` on npm is an unrelated personal package. Vendor-CLI built-ins therefore launch the vendor's own binary, never a name-matched npm package.
 - A built-in with no single model provider declares a distinct `custom:<name>` egress identity rather than a vendor label it cannot honestly claim: OpenCode routes to whichever provider the user configured, and the Devin CLI's routing is unverified. It is declared rather than left to the fallback because the string is an interface — persisted in RunResults and named in user acknowledgements — see REQ-011.
-- Per-agent quirks (Devin degraded terminal rendering, OpenCode missing undo/redo over ACP, claude-agent-acp adapter churn) are isolated in per-agent capability records, not special-cased across the engine. For the two unqualified built-ins these remain vendor-documentation claims, recorded as UNVERIFIED matrix rows until a live probe observes them.
+- Per-agent quirks (Devin degraded terminal rendering, OpenCode missing undo/redo over ACP, `@agentclientprotocol/claude-agent-acp` adapter churn) are isolated in per-agent capability records, not special-cased across the engine. For the two unqualified built-ins these remain vendor-documentation claims, recorded as UNVERIFIED matrix rows until a live probe observes them.
 
 **Edge Cases**:
 | Scenario | Input | Expected Behavior |
@@ -645,8 +645,8 @@ flowchart TD
     end
 
     subgraph agents["Agent Subprocesses (ACP v1 over stdio)"]
-        A1["claude-agent-acp"]:::neutral
-        A2["codex-acp"]:::neutral
+        A1["@agentclientprotocol/<br/>claude-agent-acp"]:::neutral
+        A2["@agentclientprotocol/<br/>codex-acp"]:::neutral
         A3["trusted custom agents"]:::neutral
     end
 
@@ -897,8 +897,8 @@ sequenceDiagram
 
 | System | Type | Protocol | Purpose | Authentication |
 |--------|------|----------|---------|----------------|
-| claude-agent-acp (npm) | Agent subprocess | ACP v1 / stdio | Claude Code runs | `ANTHROPIC_API_KEY` (or adapter auth flow) |
-| codex-acp (npm) | Agent subprocess | ACP v1 / stdio | Codex runs | ChatGPT login / `OPENAI_API_KEY` |
+| @agentclientprotocol/claude-agent-acp (npm) | Agent subprocess | ACP v1 / stdio | Claude Code runs | `ANTHROPIC_API_KEY` (or adapter auth flow) |
+| @agentclientprotocol/codex-acp (npm) | Agent subprocess | ACP v1 / stdio | Codex runs | ChatGPT login / `OPENAI_API_KEY` |
 | trusted custom agents | Agent subprocess | ACP v1 / stdio | User-managed extension point | User-declared env reference or agent-managed login |
 | OpenCode CLI (`opencode acp`) | Agent subprocess | ACP v1 / stdio | OpenCode runs; registered built-in, live contract qualification deferred | `opencode auth login` state or the configured provider's own env vars |
 | Devin CLI (`devin acp`) | Agent subprocess | ACP v1 / stdio | Devin runs; registered built-in, live contract qualification deferred | Browser login to a Devin Cloud account |
@@ -1206,8 +1206,8 @@ Local tool — "monitoring" is self-inspection: metadata JSONL logs with run/ste
 | Dependency | Owner | Status | Risk if Delayed |
 |------------|-------|--------|-----------------|
 | `agent-client-protocol` (Python SDK) | ACP org (primary maintainer: PsiACE) | Exact PyPI version/schema alignment to resolve in Phase 0; do not assume 0.11.1 | Core protocol layer; implementation blocked until pin is verified |
-| claude-agent-acp | agentclientprotocol org | 0.63.0, active churn | Claude support degrades; pin + contract tests |
-| codex-acp | agentclientprotocol org | 1.1.7 | Codex support |
+| @agentclientprotocol/claude-agent-acp | agentclientprotocol org | 0.64.0, active churn | Claude support degrades; pin + contract tests |
+| @agentclientprotocol/codex-acp | agentclientprotocol org | 1.1.7 | Codex support |
 | OpenCode CLI | OpenCode | Registered built-in via `opencode acp`; no pinnable adapter, live qualification deferred | Optional built-in breadth; a CLI change is caught at handshake, not by a pin |
 | Devin CLI | Cognition | Registered built-in via `devin acp`; no pinnable version published, live qualification deferred | Optional built-in breadth; a CLI change is caught at handshake, not by a pin |
 | uv, typer, pydantic, rich, ruff, pytest | Community | Stable | Low |

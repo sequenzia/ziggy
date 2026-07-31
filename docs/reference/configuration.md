@@ -526,8 +526,8 @@ Four agents ship built in — no `[agents.*]` entry is needed to use any of them
 
 | Name | Command | Provider | `api_key_env` | `orchestration_eligible` |
 |------|---------|----------|---------------|--------------------------|
-| `claude` | `npx --no-install claude-agent-acp@0.63.0` | `anthropic` | `null` (adapter-managed login) | `false` |
-| `codex` | `npx --no-install codex-acp@1.1.7` | `openai` | `null` (ChatGPT login state) | `false` |
+| `claude` | `npx --no-install @agentclientprotocol/claude-agent-acp@0.64.0` | `anthropic` | `null` (adapter-managed login) | `false` |
+| `codex` | `npx --no-install @agentclientprotocol/codex-acp@1.1.7` | `openai` | `null` (ChatGPT login state) | `false` |
 | `opencode` | `opencode acp` | `custom:opencode` | `null` (`opencode auth login` state) | `false` |
 | `devin` | `devin acp` | `custom:devin` | `null` (Devin Cloud browser login) | `false` |
 

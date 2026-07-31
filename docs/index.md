@@ -90,7 +90,7 @@ Ziggy **never auto-downloads** an agent adapter — the `claude` and `codex` bui
 with `npx --no-install`. Install the exact reviewed pins yourself:
 
 ```bash
-npm install -g claude-agent-acp@0.63.0 codex-acp@1.1.7
+npm install -g @agentclientprotocol/claude-agent-acp@0.64.0 @agentclientprotocol/codex-acp@1.1.7
 ```
 
 The `opencode` and `devin` builtins speak ACP from their own CLI, so they have no adapter

@@ -9,6 +9,14 @@ Versions are derived from git tags (`vX.Y.Z`) via hatch-vcs; see
 
 ## [Unreleased]
 
+### Changed
+
+- Move built-in adapter pins to the new npm scope: `claude-agent-acp@0.63.0`
+  becomes `@agentclientprotocol/claude-agent-acp@0.64.0` and `codex-acp@1.1.7`
+  becomes `@agentclientprotocol/codex-acp@1.1.7`. The unscoped packages were
+  removed from the npm registry, so fresh installs of the old pins fail;
+  reinstall with the scoped names (`ziggy doctor` prints the exact command)
+
 ## [0.1.0] - 2026-07-30
 
 ### Added

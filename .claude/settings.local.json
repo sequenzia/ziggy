@@ -1,4 +1,7 @@
 {
+  "enabledMcpjsonServers": [
+    "context7"
+  ],
   "disabledMcpjsonServers": [
     "amc"
   ],
@@ -7,5 +10,6 @@
   },
   "enabledPlugins": {
     "agent-alchemy-sdd-tools@agent-alchemy": true
-  }
+  },
+  "enableAllProjectMcpServers": true
 }

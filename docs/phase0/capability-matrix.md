@@ -16,8 +16,8 @@ encoded in `ziggy.agents.builtins` (`VENDOR_CLI_AGENTS`, `DEFAULT_PROBED_AGENTS`
 
 | Agent | Package | Pinned version | Launch command (default) | Auth |
 |-------|---------|----------------|--------------------------|------|
-| claude | `claude-agent-acp` (npm) | 0.63.0 | `npx --no-install claude-agent-acp@0.63.0` *(requires prior explicit install; Ziggy never auto-downloads)* | `ANTHROPIC_API_KEY` env or adapter-managed login via `HOME` |
-| codex | `codex-acp` (npm) | 1.1.7 | `npx --no-install codex-acp@1.1.7` | ChatGPT login state or `OPENAI_API_KEY` |
+| claude | `@agentclientprotocol/claude-agent-acp` (npm) | 0.64.0 | `npx --no-install @agentclientprotocol/claude-agent-acp@0.64.0` *(requires prior explicit install; Ziggy never auto-downloads)* | `ANTHROPIC_API_KEY` env or adapter-managed login via `HOME` |
+| codex | `@agentclientprotocol/codex-acp` (npm) | 1.1.7 | `npx --no-install @agentclientprotocol/codex-acp@1.1.7` | ChatGPT login state or `OPENAI_API_KEY` |
 
 `--no-install` enforces REQ-002's no-silent-download rule: if the pinned package
 is absent, launch fails (`AgentLaunchError`) and it is never fetched at run time.
@@ -67,7 +67,7 @@ mcpCapabilities, sessionCapabilities), `authMethods`. Cached summaries shown by
 
 ## Behavior matrix (to be populated by live probes)
 
-| Probe | claude-agent-acp 0.63.0 | codex-acp 1.1.7 |
+| Probe | @agentclientprotocol/claude-agent-acp 0.64.0 | @agentclientprotocol/codex-acp 1.1.7 |
 |-------|--------------------------|------------------|
 | Install + resolvable without download | UNVERIFIED (live probe deferred) | UNVERIFIED (live probe deferred) |
 | `initialize` capabilities snapshot | UNVERIFIED | UNVERIFIED |
@@ -120,7 +120,7 @@ honest default the spec requires.
 
 ## Deferred live checklist (run before v0.1 release)
 
-1. `npm install -g claude-agent-acp@0.63.0 codex-acp@1.1.7` (reviewed exact versions; record hashes).
+1. `npm install -g @agentclientprotocol/claude-agent-acp@0.64.0 @agentclientprotocol/codex-acp@1.1.7` (reviewed exact versions; record hashes).
 2. `ziggy doctor` — handshake per agent; capture capabilities JSON into this file.
 3. `pytest -m live` — 20-run smoke set per built-in (§3.2 target ≥95%).
 4. Probe direct-tool behavior: run each adapter against a canary workspace with

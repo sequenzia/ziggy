@@ -83,7 +83,7 @@ ziggy --help
 This is a **separate, deliberate step**. Ziggy will not do it for you:
 
 ```bash
-npm install -g claude-agent-acp@0.63.0 codex-acp@1.1.7
+npm install -g @agentclientprotocol/claude-agent-acp@0.64.0 @agentclientprotocol/codex-acp@1.1.7
 ```
 
 `claude` and `codex` launch as `npx --no-install <pinned-package>`. That
@@ -105,8 +105,8 @@ brew install --cask devin-cli                  # Linux: curl -fsSL https://cli.d
 
 | Agent | Launch command | Provider (egress identity) | Credential |
 | --- | --- | --- | --- |
-| `claude` | `npx --no-install claude-agent-acp@0.63.0` | `anthropic` | adapter-managed login state under `HOME` (`api_key_env` is unset by default) |
-| `codex` | `npx --no-install codex-acp@1.1.7` | `openai` | ChatGPT login state under `HOME` |
+| `claude` | `npx --no-install @agentclientprotocol/claude-agent-acp@0.64.0` | `anthropic` | adapter-managed login state under `HOME` (`api_key_env` is unset by default) |
+| `codex` | `npx --no-install @agentclientprotocol/codex-acp@1.1.7` | `openai` | ChatGPT login state under `HOME` |
 | `opencode` | `opencode acp` (found on `PATH`) | `custom:opencode` | `opencode auth login` state under `HOME`, or the configured provider's own env vars |
 | `devin` | `devin acp` (found on `PATH`) | `custom:devin` | browser login to a Devin Cloud account |
 
@@ -232,7 +232,7 @@ reason the default scope leaves them out.
 | First-run failure | What it means | Fix |
 | --- | --- | --- |
 | `agent-command-resolvable:*` fails | The launch command is not on `PATH` for this shell — `npx` for `claude`/`codex`, the vendor binary for `opencode`/`devin` | Install Node.js (or the vendor CLI), or fix `PATH` |
-| `acp-handshake:*` fails with an install hint | The pinned adapter package is not installed — `--no-install` refused to fetch it | `npm install -g claude-agent-acp@0.63.0 codex-acp@1.1.7` |
+| `acp-handshake:*` fails with an install hint | The pinned adapter package is not installed — `--no-install` refused to fetch it | `npm install -g @agentclientprotocol/claude-agent-acp@0.64.0 @agentclientprotocol/codex-acp@1.1.7` |
 | `acp-handshake:*` times out after 20s | The adapter launched but never completed `initialize` — usually an unauthenticated or wedged adapter | Complete the adapter's own login, then re-probe with `ziggy doctor --agent <name>` |
 | `api-key-env-set:*` fails | Config names an `api_key_env` variable that is unset or empty | `export` it in the shell that runs Ziggy, or correct the name in user config |
 | `store-writable` or `server-readiness` fails | The store root cannot be written | Check ownership and permissions of `$ZIGGY_HOME` (default `~/.ziggy`) |

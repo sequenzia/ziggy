@@ -44,7 +44,7 @@ class MyClient:            # implements acp.interfaces.Client (structural Protoc
     # unsupported surfaces: raise acp.RequestError.method_not_found(...)
     def on_connect(self, conn): self.conn = conn
 
-async with spawn_agent_process(MyClient(), "npx", "claude-agent-acp",
+async with spawn_agent_process(MyClient(), "npx", "@agentclientprotocol/claude-agent-acp",
                                env={...explicit...}, cwd=str(workdir)) as (conn, process):
     init = await conn.initialize(protocol_version=1,
         client_capabilities=ClientCapabilities(
